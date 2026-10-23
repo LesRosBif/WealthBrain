@@ -84,7 +84,7 @@ function taxRender(){
  const t=taxState(),owner=$('taxOwner');if(!owner)return;
  const current=owner.value||'self',year=Number($('taxYear').value)||taxYear(today());
  const profile=t.profiles.find(x=>x.owner===current&&x.year===year);
- for(const name of ['salary','bonus','other','deductions']){const el=$('tax'+name[0].toUpperCase()+name.slice(1));if(document.activeElement!==el)el.value=profile?.[name]??0}
+ for(const name of ['salary','bonus','other','deductions','interest','dividends']){const el=$('tax'+name[0].toUpperCase()+name.slice(1));if(document.activeElement!==el)el.value=profile?.[name]??0}
  const i=taxIncome(profile||{});
  $('taxIncomeResult').innerHTML='<strong>'+pounds(i.ani)+'</strong> adjusted net income · '+escapeHTML(i.band)+'<br>Indicative non-savings income tax: <strong>'+pounds(i.tax)+'</strong> · personal allowance '+pounds(i.pa);
  const options=db.accounts.map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');
@@ -101,6 +101,7 @@ function taxRender(){
  const available=Math.min(remaining,Math.max(0,balance(account||{id:'missing'}))/100*.25);
  return '<div class="row"><div><strong>'+escapeHTML(account?.name||'Unlinked pension')+'</strong><br><small>Tax-free lump sum remaining allowance '+pounds(remaining)+'</small></div><strong>Illustrative available '+pounds(available)+'</strong></div>';
  }).join('')||'<p class="muted">No pension allowances recorded.</p>';
+ taxExtraRender();
 }
 
 const BACKUP_START='----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----';
@@ -122,11 +123,68 @@ $('recoveryExport').onclick=()=>{const raw=localStorage.getItem(RECOVERY_KEY);if
 $('recoveryRestore').onclick=()=>{const raw=localStorage.getItem(RECOVERY_KEY);if(!raw){toast('No recovery snapshot available');return}if(!confirm('Restore the recovery snapshot? Current data will be replaced. Export your current data first.'))return;try{const recovered=validateData(JSON.parse(raw));localStorage.setItem(KEY,JSON.stringify({...recovered,version:SCHEMA}));location.reload()}catch(err){toast('Recovery failed: '+err.message)}};
 
 
+
+/* Tax planning estimates. Enacted 2026/27 England baseline; no future-law projection. */
+const TAX_RULES={year:2026,personalAllowance:12570,allowanceTaperStart:100000,allowanceTaperEnd:125140,basicLimit:37700,higherLimit:125140,dividendAllowance:500,savingsAllowanceBasic:1000,savingsAllowanceHigher:500,cgtExemption:3000,cgtBasicRate:.18,cgtHigherRate:.24,pensionAnnualAllowance:60000,standardLSA:268275};
+function taxBandSlices(amount,remainingBasic){
+ const basic=Math.min(Math.max(0,amount),Math.max(0,remainingBasic));
+ return {basic,higher:Math.max(0,amount-basic)};
+}
+function incomeEstimate(p){
+ const base=taxIncome(p),interest=Math.max(0,Number(p.interest)||0),dividends=Math.max(0,Number(p.dividends)||0);
+ const taxableEarn=Math.max(0,base.gross-Math.max(0,Number(p.deductions)||0)-base.pa);
+ const basicLeft=Math.max(0,TAX_RULES.basicLimit-taxableEarn);
+ const savingsAllowance=base.ani>125140?0:base.ani>50270?500:1000;
+ const taxableInterest=Math.max(0,interest-savingsAllowance);
+ const interestSlice=taxBandSlices(taxableInterest,basicLeft);
+ const interestTax=interestSlice.basic*.2+interestSlice.higher*(base.ani>125140?.45:.4);
+ const divTaxable=Math.max(0,dividends-TAX_RULES.dividendAllowance);
+ const dividendSlice=taxBandSlices(divTaxable,Math.max(0,basicLeft-taxableInterest));
+ const dividendTax=dividendSlice.basic*.0875+dividendSlice.higher*(base.ani>125140?.3935:.3375);
+ return {...base,interestTax,dividendTax,totalTax:base.tax+interestTax+dividendTax,savingsAllowance,dividendAllowance:TAX_RULES.dividendAllowance};
+}
+function disposalEstimate(h,proceeds,cost,yearProfile,losses=0){
+ const gain=Math.max(0,proceeds-cost),exempt=Math.max(0,gain-Math.max(0,losses)-TAX_RULES.cgtExemption);
+ const tax=incomeEstimate(yearProfile||{}),basicRemaining=Math.max(0,TAX_RULES.basicLimit-Math.max(0,tax.gross-(Number(yearProfile?.deductions)||0)-tax.pa));
+ const split=taxBandSlices(exempt,basicRemaining);
+ const conditional=(h.wrapper==='isa'||h.wrapper==='sipp'||h.wrapper==='workplace')?'wrapper':(h.scheme==='eis'||h.scheme==='seis')&&h.eligible==='yes'&&h.issueDate&&((dateMs(today())-dateMs(h.issueDate))/86400000)>=365.25*3?'scheme':'none';
+ return {gain,taxable:conditional==='none'?exempt:0,estimate:conditional==='none'?split.basic*.18+split.higher*.24:0,conditional};
+}
+function pensionScenario(pensionValue,withdrawal,lsa,used){
+ const requested=Math.min(Math.max(0,withdrawal),Math.max(0,pensionValue));
+ const available=Math.max(0,lsa-used);
+ const taxFree=Math.min(requested*.25,available);
+ return {taxFree,taxable:requested-taxFree,remaining:Math.max(0,pensionValue-requested)};
+}
+function taxExtraRender(){
+ const t=taxState(),owner=$('taxOwner').value,year=Number($('taxYear').value),p=t.profiles.find(x=>x.owner===owner&&x.year===year)||{};
+ const result=incomeEstimate(p),el=$('taxExtendedResult');
+ el.innerHTML='Estimated income tax including savings/dividends: <strong>'+pounds(result.totalTax)+'</strong><br><small>Non-savings '+pounds(result.tax)+' · savings '+pounds(result.interestTax)+' · dividends '+pounds(result.dividendTax)+'</small>';
+ const list=$('taxHoldingActions');
+ list.innerHTML=t.holdings.map(x=>{
+ const cost=Number(x.cost)||0,value=Number(x.value)||0,d=disposalEstimate(x,value,cost,p);
+ return '<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>Illustrative gain '+pounds(d.gain)+' · '+(d.conditional==='wrapper'?'Tax-exempt wrapper':d.conditional==='scheme'?'Potential qualifying EIS/SEIS exemption':'Estimated CGT '+pounds(d.estimate))+'</small></div><div><button type="button" data-tax-edit="'+escapeHTML(x.id)+'">Edit</button> <button type="button" data-tax-delete="'+escapeHTML(x.id)+'">Delete</button></div></div>';
+ }).join('');
+ const selected=$('taxPensionAccount').value,account=db.accounts.find(x=>x.id===selected);
+ const record=t.pensions.find(x=>x.accountId===selected)||{};
+ const scenario=pensionScenario(account?balance(account)/100:0,Number($('taxWithdrawal').value)||0,Number(record.lsa??268275),Number(record.used)||0);
+ $('taxWithdrawalResult').textContent='Illustrative tax-free cash '+pounds(scenario.taxFree)+' · potentially taxable pension withdrawal '+pounds(scenario.taxable)+' · remaining pension '+pounds(scenario.remaining)+'. Taxable withdrawal is not yet converted into an income tax bill.';
+}
+
 function taxForms(){
  $('taxYear').value=taxYear(today());
  for(const id of ['taxOwner','taxYear'])$(id).addEventListener('change',taxRender);
- $('taxProfileForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState(),year=Number(d.year);if(!Number.isInteger(year)||year<2024||year>2100)throw Error('Invalid tax year');for(const k of ['salary','bonus','other','deductions'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid amount');t.profiles=t.profiles.filter(x=>x.owner!==d.owner||x.year!==year);t.profiles.push({...d,year});persist();toast('Tax profile saved')}catch(err){toast(err.message)}});
- $('taxHoldingForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target);if(!db.accounts.some(x=>x.id===d.accountId))throw Error('Choose account');validateDate(d.issueDate);for(const k of ['cost','value','reliefClaimed'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid holding amount');taxState().holdings.push({...d,id:crypto.randomUUID()});persist();e.target.reset();toast('Holding recorded')}catch(err){toast(err.message)}});
+ $('taxProfileForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState(),year=Number(d.year);if(!Number.isInteger(year)||year<2024||year>2100)throw Error('Invalid tax year');for(const k of ['salary','bonus','other','deductions','interest','dividends'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid amount');t.profiles=t.profiles.filter(x=>x.owner!==d.owner||x.year!==year);t.profiles.push({...d,year});persist();toast('Tax profile saved')}catch(err){toast(err.message)}});
+ $('taxHoldingForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target);if(!db.accounts.some(x=>x.id===d.accountId))throw Error('Choose account');validateDate(d.issueDate);for(const k of ['cost','value','reliefClaimed'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid holding amount');const t=taxState(),id=$('taxHoldingEditId').value||crypto.randomUUID();t.holdings=t.holdings.filter(x=>x.id!==id);t.holdings.push({...d,id});persist();e.target.reset();$('taxHoldingEditId').value='';toast('Holding saved')}catch(err){toast(err.message)}});
+ $('taxWithdrawal').addEventListener('input',taxExtraRender);
+ $('taxPensionAccount').addEventListener('change',taxExtraRender);
+ $('taxHoldingActions').addEventListener('click',e=>{
+  const edit=e.target.closest('[data-tax-edit]'),del=e.target.closest('[data-tax-delete]');if(!edit&&!del)return;
+  const id=(edit||del).dataset[edit?'taxEdit':'taxDelete'],t=taxState(),item=t.holdings.find(x=>x.id===id);if(!item)return;
+  if(del){if(!confirm('Delete tax metadata for '+item.name+'? This will not remove the linked wealth account.'))return;t.holdings=t.holdings.filter(x=>x.id!==id);persist();return}
+  const form=$('taxHoldingForm');for(const [key,value] of Object.entries(item)){const input=form.elements.namedItem(key);if(input)input.value=value}
+  $('taxHoldingEditId').value=id;form.scrollIntoView({behavior:'smooth',block:'start'});toast('Editing '+item.name);
+ });
  $('taxPensionForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState();if(!db.accounts.some(x=>x.id===d.accountId&&x.type==='pension'))throw Error('Choose pension');if(Number(d.lsa)<0||Number(d.used)<0||!Number.isFinite(Number(d.lsa)+Number(d.used)))throw Error('Invalid allowance');t.pensions=t.pensions.filter(x=>x.accountId!==d.accountId);t.pensions.push(d);persist();toast('Pension allowance saved')}catch(err){toast(err.message)}});
 }
 taxForms();defaults();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
