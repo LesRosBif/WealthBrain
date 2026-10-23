@@ -37,6 +37,18 @@ input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="month"]::-webkit-calendar-picker-indicator{
  flex:0 0 auto;margin:0 0 0 4px;
 }
+
+/* iOS Safari intrinsic sizing: explicitly constrain the month/date field and its box. */
+#monthly .panel{min-width:0;overflow:hidden}
+#reviewMonth{display:block;inline-size:100%;max-inline-size:100%;min-inline-size:0;width:100%;box-sizing:border-box}
+input[type="date"],input[type="month"]{overflow:hidden}
+@media(max-width:649px){
+ #monthly .grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+ #monthly .grid>div:last-child{grid-column:1/-1}
+ #monthAccounts .row{display:block}
+ #monthAccounts .row>div{width:100%;text-align:left!important}
+ #monthAccounts .row>div:last-child{margin-top:7px}
+}
 </style></head><body><header><h1>Personal Wealth OS</h1><small>Offline-first · Stored on this device · Mobile Build 05</small></header><main>
 <section id="overview"><div class="grid"><div class="panel"><small>Net worth</small><div class="metric" id="net">£0</div></div><div class="panel"><small>Accessible</small><div class="metric" id="liquid">£0</div></div><div class="panel"><small>Accounts</small><div class="metric" id="count">0</div></div><div class="panel"><small>20-year base</small><div class="metric" id="future">£0</div></div></div><div class="panel"><h2>Wealth projection</h2><small>Illustrative nominal GBP · 3 scenarios</small><svg id="chart" viewBox="0 0 340 220" preserveAspectRatio="none"></svg><div class="muted" style="font-size:12px">🟠 Pessimistic &nbsp; 🔵 Base &nbsp; 🟢 Optimistic</div></div><div class="notice">Early modelling prototype. Forecasts exclude tax, pension drawdown, FX, mortgage amortisation and full transaction reconciliation. Do not use for financial decisions.</div><div class="panel"><h2>Latest accounts</h2><div id="summaryAccounts"></div></div></section>
 <section id="accounts" class="hide"><div class="panel"><h2>Add account</h2><form id="accountForm" class="form"><div><label>Account name</label><input name="name" required placeholder="Stocks & Shares ISA"></div><div><label>Type</label><select name="type"><option value="cash">Cash</option><option value="investment">Investment</option><option value="pension">Pension</option><option value="property">Property</option><option value="debt">Debt</option><option value="private">Private equity</option><option value="other">Other</option></select></div><div><label>Opening balance (£)</label><input name="balance" type="number" step="0.01" min="0" required></div><div><label>Opening date</label><input name="date" type="date" required></div><div><label>Forecast model</label><select name="model"><option value="blended">Blended</option><option value="fixed">Fixed rate</option><option value="assumed">Assumed growth</option><option value="historical">Historical</option><option value="debt">Debt (simplified)</option></select></div><div><label>Annual rate (%)</label><input name="rate" type="number" step="0.1" value="5"></div><div><label>Access</label><select name="accessibility"><option value="liquid">Accessible</option><option value="restricted">Restricted</option></select></div><button class="primary">Add account</button></form></div><div class="panel"><h2>Accounts</h2><div id="accountList"></div></div></section>
