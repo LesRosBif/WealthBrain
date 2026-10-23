@@ -88,7 +88,7 @@ function taxRender(){
  const i=taxIncome(profile||{});
  $('taxIncomeResult').innerHTML='<strong>'+pounds(i.ani)+'</strong> adjusted net income · '+escapeHTML(i.band)+'<br>Indicative non-savings income tax: <strong>'+pounds(i.tax)+'</strong> · personal allowance '+pounds(i.pa);
  const options=db.accounts.map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');
- const select=$('taxAccount'),old=select.value;select.innerHTML=options;if([...select.options].some(x=>x.value===old))select.value=old;
+ const select=$('taxAccount'),old=select.value;select.innerHTML=options;if([...select.options].some(x=>x.value===old))select.value=old;const ps=$('taxPensionAccount'),po=ps.value;ps.innerHTML=db.accounts.filter(x=>x.type==='pension').map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');if([...ps.options].some(x=>x.value===po))ps.value=po;
  $('taxHoldings').innerHTML=t.holdings.map(x=>{
  const acc=db.accounts.find(a=>a.id===x.accountId),cost=Number(x.cost)||0,value=Number(x.value)||0,eligible=(x.scheme==='eis'||x.scheme==='seis')&&x.eligible==='yes';
  const reliefRate=x.scheme==='seis'?.5:x.scheme==='eis'?.3:0;
@@ -121,4 +121,12 @@ $('schemaStatus').textContent='Schema v'+db.version+(startupError?' — STORAGE 
 $('recoveryExport').onclick=()=>{const raw=localStorage.getItem(RECOVERY_KEY);if(!raw){toast('No recovery snapshot available');return}downloadBackup(raw,'json','application/json')};
 $('recoveryRestore').onclick=()=>{const raw=localStorage.getItem(RECOVERY_KEY);if(!raw){toast('No recovery snapshot available');return}if(!confirm('Restore the recovery snapshot? Current data will be replaced. Export your current data first.'))return;try{const recovered=validateData(JSON.parse(raw));localStorage.setItem(KEY,JSON.stringify({...recovered,version:SCHEMA}));location.reload()}catch(err){toast('Recovery failed: '+err.message)}};
 
-defaults();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+
+function taxForms(){
+ $('taxYear').value=taxYear(today());
+ for(const id of ['taxOwner','taxYear'])$(id).addEventListener('change',taxRender);
+ $('taxProfileForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState(),year=Number(d.year);if(!Number.isInteger(year)||year<2024||year>2100)throw Error('Invalid tax year');for(const k of ['salary','bonus','other','deductions'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid amount');t.profiles=t.profiles.filter(x=>x.owner!==d.owner||x.year!==year);t.profiles.push({...d,year});persist();toast('Tax profile saved')}catch(err){toast(err.message)}});
+ $('taxHoldingForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target);if(!db.accounts.some(x=>x.id===d.accountId))throw Error('Choose account');validateDate(d.issueDate);for(const k of ['cost','value','reliefClaimed'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid holding amount');taxState().holdings.push({...d,id:crypto.randomUUID()});persist();e.target.reset();toast('Holding recorded')}catch(err){toast(err.message)}});
+ $('taxPensionForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState();if(!db.accounts.some(x=>x.id===d.accountId&&x.type==='pension'))throw Error('Choose pension');if(Number(d.lsa)<0||Number(d.used)<0||!Number.isFinite(Number(d.lsa)+Number(d.used)))throw Error('Invalid allowance');t.pensions=t.pensions.filter(x=>x.accountId!==d.accountId);t.pensions.push(d);persist();toast('Pension allowance saved')}catch(err){toast(err.message)}});
+}
+taxForms();defaults();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
