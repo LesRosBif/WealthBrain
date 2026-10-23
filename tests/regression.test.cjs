@@ -81,20 +81,20 @@ test('pension withdrawal capped by pot and unused tax-free allowance',()=>{
  }
 });
 test('backup parser round-trips JSON and portable text with all tax records',()=>{
- const {call}=engine(['validateData','parseBackup'],{},'const BACKUP_START="BEGIN_WEALTH_OS_BACKUP"; const BACKUP_END="END_WEALTH_OS_BACKUP";');
+ const {call}=engine(['validateData','parseBackup'],{},'const BACKUP_START="----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----"; const BACKUP_END="----- END PERSONAL WEALTH OS BACKUP JSON -----";');
  const raw=JSON.stringify(fixture);
  const parsed=call('parseBackup',raw);
  assert.deepEqual(JSON.parse(JSON.stringify(parsed)),fixture);
- const portable='Header\nBEGIN_WEALTH_OS_BACKUP\n'+raw+'\nEND_WEALTH_OS_BACKUP\n';
+ const portable='Header\n----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----\n'+raw+'\n----- END PERSONAL WEALTH OS BACKUP JSON -----\n';
  assert.deepEqual(JSON.parse(JSON.stringify(call('parseBackup',portable))),fixture);
 });
 test('backup parser rejects malformed, unsupported and truncated data',()=>{
- const {call}=engine(['parseBackup'],{},'const BACKUP_START="BEGIN_WEALTH_OS_BACKUP"; const BACKUP_END="END_WEALTH_OS_BACKUP";');
+ const {call}=engine(['parseBackup'],{},'const BACKUP_START="----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----"; const BACKUP_END="----- END PERSONAL WEALTH OS BACKUP JSON -----";');
  for(const raw of [
   '{not json',JSON.stringify({...fixture,version:99}),
   JSON.stringify({...fixture,observations:'bad'}),
   JSON.stringify({...fixture,observations:[{accountId:'demo-cash',balance:1.5}]}),
-  'BEGIN_WEALTH_OS_BACKUP\n'+JSON.stringify(fixture)
+  '----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----\n'+JSON.stringify(fixture)
  ])assert.throws(()=>call('parseBackup',raw));
 });
 test('schema v2 migration keeps all financial records and writes recovery snapshot',()=>{
