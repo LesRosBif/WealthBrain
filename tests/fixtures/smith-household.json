@@ -1,0 +1,148 @@
+{
+  "version": 3,
+  "accounts": [
+    {
+      "id": "demo-cash",
+      "name": "Smith Current Account",
+      "type": "cash",
+      "accessibility": "liquid",
+      "model": "fixed",
+      "rate": 0.01
+    },
+    {
+      "id": "demo-isa",
+      "name": "Smith ISA",
+      "type": "investment",
+      "accessibility": "liquid",
+      "model": "assumed",
+      "rate": 0.05
+    },
+    {
+      "id": "demo-sipp",
+      "name": "Smith SIPP",
+      "type": "pension",
+      "accessibility": "restricted",
+      "model": "assumed",
+      "rate": 0.05
+    },
+    {
+      "id": "demo-home",
+      "name": "Smith Family Home",
+      "type": "property",
+      "accessibility": "restricted",
+      "model": "fixed",
+      "rate": 0.02
+    },
+    {
+      "id": "demo-mortgage",
+      "name": "Smith Mortgage",
+      "type": "debt",
+      "accessibility": "restricted",
+      "model": "debt",
+      "rate": 0.04
+    },
+    {
+      "id": "demo-shares",
+      "name": "Smith Taxable Brokerage",
+      "type": "investment",
+      "accessibility": "liquid",
+      "model": "assumed",
+      "rate": 0.04
+    }
+  ],
+  "observations": [
+    {
+      "id": "o1",
+      "accountId": "demo-cash",
+      "date": "2026-04-06",
+      "balance": 2200000,
+      "notes": "Fictional"
+    },
+    {
+      "id": "o2",
+      "accountId": "demo-isa",
+      "date": "2026-04-06",
+      "balance": 12000000,
+      "notes": "Fictional"
+    },
+    {
+      "id": "o3",
+      "accountId": "demo-sipp",
+      "date": "2026-04-06",
+      "balance": 42000000,
+      "notes": "Fictional"
+    },
+    {
+      "id": "o4",
+      "accountId": "demo-home",
+      "date": "2026-04-06",
+      "balance": 85000000,
+      "notes": "Fictional"
+    },
+    {
+      "id": "o5",
+      "accountId": "demo-mortgage",
+      "date": "2026-04-06",
+      "balance": 40000000,
+      "notes": "Fictional"
+    },
+    {
+      "id": "o6",
+      "accountId": "demo-shares",
+      "date": "2026-04-06",
+      "balance": 10000000,
+      "notes": "Fictional"
+    }
+  ],
+  "transactions": [],
+  "plans": [],
+  "tax": {
+    "profiles": [
+      {
+        "owner": "self",
+        "year": 2026,
+        "salary": "185000",
+        "bonus": "0",
+        "other": "0",
+        "interest": "0",
+        "dividends": "0",
+        "deductions": "0"
+      },
+      {
+        "owner": "spouse",
+        "year": 2026,
+        "salary": "45000",
+        "bonus": "0",
+        "other": "0",
+        "interest": "0",
+        "dividends": "0",
+        "deductions": "0"
+      }
+    ],
+    "holdings": [
+      {
+        "id": "demo-eis",
+        "accountId": "demo-shares",
+        "name": "Fictional EIS Ltd",
+        "owner": "self",
+        "wrapper": "unwrapped",
+        "scheme": "eis",
+        "eligible": "unknown",
+        "cost": "10000",
+        "value": "12000",
+        "issueDate": "2025-05-01",
+        "reliefClaimed": "0"
+      }
+    ],
+    "pensions": [
+      {
+        "accountId": "demo-sipp",
+        "lsa": "268275",
+        "used": "20000",
+        "thresholdIncome": "185000",
+        "adjustedIncome": "185000"
+      }
+    ],
+    "disposals": []
+  }
+}

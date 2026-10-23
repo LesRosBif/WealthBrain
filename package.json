@@ -1,0 +1,8 @@
+{
+  "name": "wealthbrain",
+  "private": true,
+  "version": "15.0.0",
+  "scripts": {
+    "test": "node --check app.js && node --check sw.js && node --test tests/*.test.cjs"
+  }
+}
