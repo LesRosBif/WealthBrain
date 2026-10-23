@@ -40,7 +40,7 @@ input[type="month"]::-webkit-calendar-picker-indicator{
 
 /* iOS Safari intrinsic sizing: explicitly constrain the month/date field and its box. */
 #monthly .panel{min-width:0;overflow:hidden}
-#reviewMonth{display:block;inline-size:100%;max-inline-size:100%;min-inline-size:0;width:100%;box-sizing:border-box}
+#reviewMonth{display:block;inline-size:calc(100% - 12px);max-inline-size:calc(100% - 12px);min-inline-size:0;width:calc(100% - 12px);box-sizing:border-box}
 input[type="date"],input[type="month"]{overflow:hidden}
 @media(max-width:649px){
  #monthly .grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
