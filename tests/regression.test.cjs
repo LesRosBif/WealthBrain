@@ -28,7 +28,7 @@ const fixture=JSON.parse(fs.readFileSync('tests/fixtures/smith-household.json','
 test('2026/27 tax thresholds and personal allowance taper (independent examples)',()=>{
  const {call}=engine(['taxIncome']);
  const examples=[
-  [0,0,0],[12570,0,12570],[20000,1486,12570],
+  [0,0,12570],[12570,0,12570],[20000,1486,12570],
   [50270,7540,12570],[100000,27432,12570],
   [110000,31432+2000,7570],[125140,42516,0],
   [150000,53703,0]
