@@ -1,6 +1,6 @@
 'use strict';
 const KEY='personal-wealth-os-v2',RECOVERY_KEY='personal-wealth-os-recovery-v3',SCHEMA=3;
-const empty=()=>({version:SCHEMA,accounts:[],observations:[],transactions:[],plans:[]});
+const empty=()=>({version:SCHEMA,accounts:[],observations:[],transactions:[],plans:[],tax:{profiles:[],holdings:[],pensions:[]}});
 function validateData(x){
  if(!x||typeof x!=='object'||![2,3].includes(x.version))throw Error('Unsupported data schema');
  for(const k of ['accounts','observations','transactions','plans'])if(!Array.isArray(x[k]))throw Error('Invalid '+k+' collection');
@@ -28,7 +28,7 @@ function observed(a){const os=db.observations.filter(o=>o.accountId===a.id).sort
 function rate(a,adjust){let r=a.rate;const o=observed(a);if(o!==null){if(a.model==='historical')r=o;else if(a.model==='blended')r=.7*a.rate+.3*o}if(a.model!=='fixed'&&a.model!=='debt')r+=adjust;return Math.max(-.5,Math.min(.5,r))}
 function monthDate(start,m){const d=new Date(start+'T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+m);return d.toISOString().slice(0,10)}
 function forecast(adjust){const bals=Object.fromEntries(db.accounts.map(a=>[a.id,balance(a)]));const series=[];const start=today();for(let m=0;m<=480;m++){if(m){const d=monthDate(start,m);for(const a of db.accounts)bals[a.id]=Math.round(bals[a.id]*Math.pow(1+rate(a,adjust),1/12));for(const p of db.plans){if(d<p.start||(p.end&&d>p.end))continue;const elapsed=Math.max(0,yearDays(p.start,d)/365.25);bals[p.accountId]=(bals[p.accountId]||0)+Math.round(p.amount*Math.pow(1+p.escalation,elapsed))}}if(m%12===0){let net=0,liquid=0;for(const a of db.accounts){const v=bals[a.id];net+=a.type==='debt'?-Math.abs(v):v;if(a.accessibility==='liquid'&&a.type!=='debt')liquid+=v}series.push({year:m/12,net,liquid})}}return series}
-function render(){const net=db.accounts.reduce((s,a)=>s+(a.type==='debt'?-Math.abs(balance(a)):balance(a)),0);const liquid=db.accounts.reduce((s,a)=>s+(a.type!=='debt'&&a.accessibility==='liquid'?balance(a):0),0);$('net').textContent=money(net);$('liquid').textContent=money(liquid);$('count').textContent=db.accounts.length;const scenarios=[forecast(-.025),forecast(0),forecast(.025)];$('future').textContent=money(scenarios[1][20].net);draw(scenarios);renderMonthly();const accountRows=db.accounts.map(a=>`<div class="row"><div><strong>${escapeHTML(a.name)}</strong><br><small>${escapeHTML(a.type)} · ${escapeHTML(a.model)} · ${(a.rate*100).toFixed(1)}%</small></div><div style="text-align:right"><strong>${money(balance(a))}</strong><br><small>${observed(a)===null?'No return history':(observed(a)*100).toFixed(1)+'% observed p.a.'}</small></div></div>`).join('');$('accountList').innerHTML=accountRows||'<p class="muted">Add your first account above.</p>';$('summaryAccounts').innerHTML=accountRows||'<p class="muted">No accounts yet.</p>';
+function render(){taxRender();const net=db.accounts.reduce((s,a)=>s+(a.type==='debt'?-Math.abs(balance(a)):balance(a)),0);const liquid=db.accounts.reduce((s,a)=>s+(a.type!=='debt'&&a.accessibility==='liquid'?balance(a):0),0);$('net').textContent=money(net);$('liquid').textContent=money(liquid);$('count').textContent=db.accounts.length;const scenarios=[forecast(-.025),forecast(0),forecast(.025)];$('future').textContent=money(scenarios[1][20].net);draw(scenarios);renderMonthly();const accountRows=db.accounts.map(a=>`<div class="row"><div><strong>${escapeHTML(a.name)}</strong><br><small>${escapeHTML(a.type)} · ${escapeHTML(a.model)} · ${(a.rate*100).toFixed(1)}%</small></div><div style="text-align:right"><strong>${money(balance(a))}</strong><br><small>${observed(a)===null?'No return history':(observed(a)*100).toFixed(1)+'% observed p.a.'}</small></div></div>`).join('');$('accountList').innerHTML=accountRows||'<p class="muted">Add your first account above.</p>';$('summaryAccounts').innerHTML=accountRows||'<p class="muted">No accounts yet.</p>';
 const opts=db.accounts.map(a=>`<option value="${a.id}">${escapeHTML(a.name)}</option>`).join('');for(const id of ['reviewAccount','planAccount','transferFrom','transferTo']){const el=$(id),prev=el.value;el.innerHTML=opts;if([...el.options].some(o=>o.value===prev))el.value=prev}
 $('observations').innerHTML=db.observations.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,20).map(o=>`<div class="row"><div><strong>${escapeHTML(db.accounts.find(a=>a.id===o.accountId)?.name||'Deleted')}</strong><br><small>${o.date} · ${escapeHTML(o.notes)}</small></div><strong>${money(o.balance)}</strong></div>`).join('')||'<p class="muted">No observations yet.</p>';
 $('planList').innerHTML=db.plans.map(p=>`<div class="row"><div><strong>${escapeHTML(p.name)}</strong><br><small>${escapeHTML(db.accounts.find(a=>a.id===p.accountId)?.name)} · from ${p.start}</small></div><strong>${money(p.amount)}/mo</strong></div>`).join('')||'<p class="muted">No recurring plans yet.</p>'}
@@ -67,6 +67,42 @@ handle('transferForm',d=>{if(d.from===d.to)throw Error('Choose two different acc
 function defaults(){document.querySelectorAll('input[type="date"]').forEach(el=>{if(!el.value&&!['end','flowDate'].includes(el.name))el.value=today()})}
 document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));$(b.dataset.tab).classList.remove('hide');document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');window.scrollTo(0,0)}));
 // Portable text backups are JSON wrapped in readable headings. They can be pasted into Google Docs.
+
+/* Tax profile and holdings: all amounts are GBP minor units unless otherwise noted. */
+function taxState(){if(!db.tax)db.tax={profiles:[],holdings:[],pensions:[]};for(const k of ['profiles','holdings','pensions'])if(!Array.isArray(db.tax[k]))db.tax[k]=[];return db.tax}
+function taxYear(date){const d=new Date(date+'T12:00:00Z'),y=d.getUTCFullYear();return d.getUTCMonth()>3||(d.getUTCMonth()===3&&d.getUTCDate()>=6)?y:y-1}
+function pounds(n){return money(Math.round(n*100))}
+function taxIncome(profile){
+ const gross=Math.max(0,Number(profile.salary)||0)+Math.max(0,Number(profile.bonus)||0)+Math.max(0,Number(profile.other)||0);
+ const deductions=Math.max(0,Number(profile.deductions)||0);
+ const ani=Math.max(0,gross-deductions),pa=Math.max(0,12570-Math.max(0,ani-100000)/2);
+ const taxable=Math.max(0,gross-pa-deductions);
+ const basic=Math.min(taxable,37700),higher=Math.min(Math.max(0,taxable-37700),87440),additional=Math.max(0,taxable-125140);
+ return {gross,ani,pa,tax:basic*.2+higher*.4+additional*.45,band:ani>125140?'Additional (45%)':ani>100000?'Higher (60% effective taper)':ani>50270?'Higher (40%)':ani>12570?'Basic (20%)':'No income tax'};
+}
+function taxRender(){
+ const t=taxState(),owner=$('taxOwner');if(!owner)return;
+ const current=owner.value||'self',year=Number($('taxYear').value)||taxYear(today());
+ const profile=t.profiles.find(x=>x.owner===current&&x.year===year);
+ for(const name of ['salary','bonus','other','deductions']){const el=$('tax'+name[0].toUpperCase()+name.slice(1));if(document.activeElement!==el)el.value=profile?.[name]??0}
+ const i=taxIncome(profile||{});
+ $('taxIncomeResult').innerHTML='<strong>'+pounds(i.ani)+'</strong> adjusted net income · '+escapeHTML(i.band)+'<br>Indicative non-savings income tax: <strong>'+pounds(i.tax)+'</strong> · personal allowance '+pounds(i.pa);
+ const options=db.accounts.map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');
+ const select=$('taxAccount'),old=select.value;select.innerHTML=options;if([...select.options].some(x=>x.value===old))select.value=old;
+ $('taxHoldings').innerHTML=t.holdings.map(x=>{
+ const acc=db.accounts.find(a=>a.id===x.accountId),cost=Number(x.cost)||0,value=Number(x.value)||0,eligible=(x.scheme==='eis'||x.scheme==='seis')&&x.eligible==='yes';
+ const reliefRate=x.scheme==='seis'?.5:x.scheme==='eis'?.3:0;
+ const relief=eligible?cost*reliefRate:0;
+ return '<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>'+escapeHTML(acc?.name||'Unlinked')+' · '+escapeHTML(x.wrapper)+' · '+escapeHTML(x.scheme.toUpperCase())+' · '+escapeHTML(x.owner)+'</small></div><div><strong>'+pounds(value)+'</strong><br><small>Cost '+pounds(cost)+' · potential initial relief '+pounds(relief)+' · claimed '+pounds(Number(x.reliefClaimed)||0)+'</small></div></div>';
+ }).join('')||'<p class="muted">No tax-specific holdings recorded.</p>';
+ $('taxPensions').innerHTML=t.pensions.map(x=>{
+ const account=db.accounts.find(a=>a.id===x.accountId);
+ const remaining=Math.max(0,(Number(x.lsa)||268275)-(Number(x.used)||0));
+ const available=Math.min(remaining,Math.max(0,balance(account||{id:'missing'}))/100*.25);
+ return '<div class="row"><div><strong>'+escapeHTML(account?.name||'Unlinked pension')+'</strong><br><small>Tax-free lump sum remaining allowance '+pounds(remaining)+'</small></div><strong>Illustrative available '+pounds(available)+'</strong></div>';
+ }).join('')||'<p class="muted">No pension allowances recorded.</p>';
+}
+
 const BACKUP_START='----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----';
 const BACKUP_END='----- END PERSONAL WEALTH OS BACKUP JSON -----';
 let editsSinceBackup=0;
