@@ -104,7 +104,7 @@ function taxRender(){
  const available=Math.min(remaining,Math.max(0,balance(account||{id:'missing'}))/100*.25);
  return '<div class="row"><div><strong>'+escapeHTML(account?.name||'Unlinked pension')+'</strong><br><small>Tax-free lump sum remaining allowance '+pounds(remaining)+'</small></div><strong>Illustrative available '+pounds(available)+'</strong></div>';
  }).join('')||'<p class="muted">No pension allowances recorded.</p>';
- taxExtraRender();renderDisposals();
+ taxExtraRender();renderDisposals();retirementEstimate();
 }
 
 const BACKUP_START='----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----';
@@ -210,13 +210,34 @@ function initDisposals(){
  $('taxDisposals').addEventListener('click',e=>{const button=e.target.closest('[data-remove-disposal]');if(!button)return;if(!confirm('Delete this disposal?'))return;taxState().disposals=taxState().disposals.filter(x=>x.id!==button.dataset.removeDisposal);persist()});
 }
 
+
+function pensionAnnualAllowance(p){
+ const threshold=Number(p.thresholdIncome)||0,adjusted=Number(p.adjustedIncome)||0;
+ const reduction=threshold>200000&&adjusted>260000?Math.min(50000,Math.floor((adjusted-260000)/2)):0;
+ return Math.max(10000,60000-reduction);
+}
+function retirementEstimate(){
+ const t=taxState(),account=db.accounts.find(x=>x.id===$('taxPensionAccount').value);
+ const owner=$('taxOwner').value,year=Number($('taxYear').value);
+ const p=t.profiles.find(x=>x.owner===owner&&x.year===year)||{};
+ const rec=t.pensions.find(x=>x.accountId===account?.id)||{};
+ const amount=Number($('taxWithdrawal').value)||0;
+ const split=pensionScenario(account?balance(account)/100:0,amount,Number(rec.lsa??268275),Number(rec.used)||0);
+ const without=incomeEstimate(p);
+ const withWithdrawal=incomeEstimate({...p,other:(Number(p.other)||0)+split.taxable});
+ const additionalTax=Math.max(0,withWithdrawal.totalTax-without.totalTax);
+ $('taxRetirementResult').textContent='Illustrative extra Income Tax '+pounds(additionalTax)+' · after-tax withdrawal '+pounds(split.taxFree+split.taxable-additionalTax)+'. Assumes 25% PCLS-style tax-free cash on this withdrawal and no prior crystallisation restrictions beyond the entered allowance.';
+ const allowance=pensionAnnualAllowance(rec);
+ $('taxAnnualAllowance').textContent='Indicative annual pension allowance '+pounds(allowance)+' before carry-forward, MPAA, defined-benefit adjustments or other restrictions.';
+}
+
 function taxForms(){
  $('taxYear').value=taxYear(today());
  for(const id of ['taxOwner','taxYear'])$(id).addEventListener('change',taxRender);
  $('taxProfileForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState(),year=Number(d.year);if(!Number.isInteger(year)||year<2024||year>2100)throw Error('Invalid tax year');for(const k of ['salary','bonus','other','deductions','interest','dividends'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid amount');t.profiles=t.profiles.filter(x=>x.owner!==d.owner||x.year!==year);t.profiles.push({...d,year});persist();toast('Tax profile saved')}catch(err){toast(err.message)}});
  $('taxHoldingForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target);if(!db.accounts.some(x=>x.id===d.accountId))throw Error('Choose account');validateDate(d.issueDate);for(const k of ['cost','value','reliefClaimed'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid holding amount');const t=taxState(),id=$('taxHoldingEditId').value||crypto.randomUUID();t.holdings=t.holdings.filter(x=>x.id!==id);t.holdings.push({...d,id});persist();e.target.reset();$('taxHoldingEditId').value='';toast('Holding saved')}catch(err){toast(err.message)}});
- $('taxWithdrawal').addEventListener('input',taxExtraRender);
- $('taxPensionAccount').addEventListener('change',taxExtraRender);
+ $('taxWithdrawal').addEventListener('input',()=>{taxExtraRender();retirementEstimate()});
+ $('taxPensionAccount').addEventListener('change',()=>{taxExtraRender();retirementEstimate()});
  $('taxHoldingActions').addEventListener('click',e=>{
   const edit=e.target.closest('[data-tax-edit]'),del=e.target.closest('[data-tax-delete]');if(!edit&&!del)return;
   const id=(edit||del).dataset[edit?'taxEdit':'taxDelete'],t=taxState(),item=t.holdings.find(x=>x.id===id);if(!item)return;
