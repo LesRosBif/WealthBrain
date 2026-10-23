@@ -1,10 +1,25 @@
 'use strict';
-const KEY='personal-wealth-os-v2';
-const empty=()=>({version:2,accounts:[],observations:[],transactions:[],plans:[]});
-let db;try{db=JSON.parse(localStorage.getItem(KEY))||empty()}catch{db=empty()}
+const KEY='personal-wealth-os-v2',RECOVERY_KEY='personal-wealth-os-recovery-v3',SCHEMA=3;
+const empty=()=>({version:SCHEMA,accounts:[],observations:[],transactions:[],plans:[]});
+function validateData(x){
+ if(!x||typeof x!=='object'||![2,3].includes(x.version))throw Error('Unsupported data schema');
+ for(const k of ['accounts','observations','transactions','plans'])if(!Array.isArray(x[k]))throw Error('Invalid '+k+' collection');
+ if(x.accounts.some(a=>typeof a.id!=='string'||typeof a.name!=='string')||x.observations.some(o=>typeof o.accountId!=='string'||!Number.isSafeInteger(o.balance)))throw Error('Invalid financial records');
+ return x;
+}
+let db,startupError='';
+try{
+ const raw=localStorage.getItem(KEY);
+ if(!raw)db=empty();
+ else{const saved=validateData(JSON.parse(raw));if(saved.version===2){
+  localStorage.setItem(RECOVERY_KEY,raw);
+  db={...saved,version:SCHEMA};localStorage.setItem(KEY,JSON.stringify(db));
+ }else db=saved}
+}catch(err){startupError=String(err.message||err);db=empty()}
+
 const $=id=>document.getElementById(id),today=()=>new Date().toLocaleDateString('en-CA'),money=n=>new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP',maximumFractionDigits:0}).format(n/100),escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const minor=n=>Math.round(Number(n)*100),dateMs=s=>new Date(s+'T12:00:00Z').getTime(),yearDays=(a,b)=>(dateMs(b)-dateMs(a))/86400000;
-function persist(){localStorage.setItem(KEY,JSON.stringify(db));render();if(typeof editsSinceBackup!=='undefined'){editsSinceBackup++;backupStatus('Unsaved changes since last backup. Export after this update.')}}
+function persist(){if(startupError)throw Error('Data locked: '+startupError);validateData(db);if(!localStorage.getItem(RECOVERY_KEY)){const old=localStorage.getItem(KEY);if(old)localStorage.setItem(RECOVERY_KEY,old)}localStorage.setItem(KEY,JSON.stringify(db));render();if(typeof editsSinceBackup!=='undefined'){editsSinceBackup++;backupStatus('Unsaved changes since last backup. Export after this update.')}}
 function toast(s){$('toast').textContent=s;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',3000)}
 function getForm(form){return Object.fromEntries(new FormData(form))}
 function latest(a){return db.observations.filter(o=>o.accountId===a.id).sort((x,y)=>y.date.localeCompare(x.date))[0]}
@@ -30,15 +45,19 @@ document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()
 const BACKUP_START='----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----';
 const BACKUP_END='----- END PERSONAL WEALTH OS BACKUP JSON -----';
 let editsSinceBackup=0;
-function backupText(){return 'PERSONAL WEALTH OS — PORTABLE BACKUP\nCreated: '+new Date().toISOString()+'\nFormat: Wealth OS v2 JSON. Keep all text between the BEGIN and END markers intact.\n\n'+BACKUP_START+'\n'+JSON.stringify(db,null,2)+'\n'+BACKUP_END+'\n'}
+function backupText(){return 'PERSONAL WEALTH OS — PORTABLE BACKUP\nCreated: '+new Date().toISOString()+'\nFormat: Wealth OS v3 JSON. Keep all text between the BEGIN and END markers intact.\n\n'+BACKUP_START+'\n'+JSON.stringify(db,null,2)+'\n'+BACKUP_END+'\n'}
 function downloadBackup(contents,extension,mime){const blob=new Blob([contents],{type:mime});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='wealth-os-backup-'+today()+'.'+extension;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);editsSinceBackup=0;backupStatus('Backup prepared — confirm it is saved in Files or Google Docs.')}
 function backupStatus(message){$('backupStatus').textContent=message}
-function parseBackup(raw){let text=raw.trim();if(text.includes(BACKUP_START)){const start=text.indexOf(BACKUP_START)+BACKUP_START.length;const end=text.indexOf(BACKUP_END,start);if(end<0)throw Error('Backup end marker missing');text=text.slice(start,end).trim()}const incoming=JSON.parse(text);if(incoming.version!==2||!Array.isArray(incoming.accounts)||!Array.isArray(incoming.observations)||!Array.isArray(incoming.transactions)||!Array.isArray(incoming.plans))throw Error('Unrecognised backup format');if(incoming.accounts.some(a=>typeof a.id!=='string'||typeof a.name!=='string')||incoming.observations.some(o=>typeof o.accountId!=='string'||!Number.isSafeInteger(o.balance)))throw Error('Backup contains invalid records');return incoming}
-function restoreBackup(raw){const incoming=parseBackup(raw);if(!confirm('Replace ALL data on this device with this backup? Export your current data first if needed.'))return;const previous=db;try{db=incoming;persist();editsSinceBackup=0;backupStatus('Backup restored. Export a new copy after future edits.');toast('Backup restored')}catch(err){db=previous;throw err}}
+function parseBackup(raw){let text=raw.trim();if(text.includes(BACKUP_START)){const start=text.indexOf(BACKUP_START)+BACKUP_START.length;const end=text.indexOf(BACKUP_END,start);if(end<0)throw Error('Backup end marker missing');text=text.slice(start,end).trim()}const incoming=JSON.parse(text);if(![2,3].includes(incoming.version)||!Array.isArray(incoming.accounts)||!Array.isArray(incoming.observations)||!Array.isArray(incoming.transactions)||!Array.isArray(incoming.plans))throw Error('Unrecognised backup format');if(incoming.accounts.some(a=>typeof a.id!=='string'||typeof a.name!=='string')||incoming.observations.some(o=>typeof o.accountId!=='string'||!Number.isSafeInteger(o.balance)))throw Error('Backup contains invalid records');return incoming}
+function restoreBackup(raw){const incoming=parseBackup(raw);if(!confirm('Replace ALL data on this device with this backup? Export your current data first if needed.'))return;const previous=db;try{localStorage.setItem(RECOVERY_KEY,JSON.stringify(previous));db={...incoming,version:SCHEMA};startupError='';persist();editsSinceBackup=0;backupStatus('Backup restored. Export a new copy after future edits.');toast('Backup restored')}catch(err){db=previous;throw err}}
 $('export').onclick=()=>downloadBackup(JSON.stringify(db,null,2),'json','application/json');
 $('exportText').onclick=()=>downloadBackup(backupText(),'txt','text/plain;charset=utf-8');
 $('copyBackup').onclick=async()=>{const content=backupText();try{await navigator.clipboard.writeText(content);editsSinceBackup=0;backupStatus('Copied. Paste into Google Docs and ensure the document is saved.');toast('Backup copied')}catch{const field=$('pasteBackup');field.value=content;field.focus();field.select();toast('Select and copy the text below manually')}};
 $('import').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;restoreBackup(await file.text())}catch(err){toast('Import failed: '+err.message)}finally{e.target.value=''}};
 $('restorePaste').onclick=()=>{try{restoreBackup($('pasteBackup').value)}catch(err){toast('Import failed: '+err.message)}};
-$('clear').onclick=()=>{if(confirm('Permanently erase all Wealth OS data stored in this browser?')){db=empty();persist();toast('Local data erased')}};
-defaults();render();if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+$('clear').onclick=()=>{if(startupError){toast('Storage locked; export recovery first');return}if(confirm('Permanently erase all Wealth OS data stored in this browser?')){db=empty();persist();toast('Local data erased')}};
+$('schemaStatus').textContent='Schema v'+db.version+(startupError?' — STORAGE LOCKED: '+startupError:'')+(localStorage.getItem(RECOVERY_KEY)?' · Recovery snapshot available':' · No recovery snapshot yet');
+$('recoveryExport').onclick=()=>{const raw=localStorage.getItem(RECOVERY_KEY);if(!raw){toast('No recovery snapshot available');return}downloadBackup(raw,'json','application/json')};
+$('recoveryRestore').onclick=()=>{const raw=localStorage.getItem(RECOVERY_KEY);if(!raw){toast('No recovery snapshot available');return}if(!confirm('Restore the recovery snapshot? Current data will be replaced. Export your current data first.'))return;try{const recovered=validateData(JSON.parse(raw));localStorage.setItem(KEY,JSON.stringify({...recovered,version:SCHEMA}));location.reload()}catch(err){toast('Recovery failed: '+err.message)}};
+
+defaults();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});

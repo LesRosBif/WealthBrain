@@ -91,3 +91,6 @@ For open source projects, say how it is licensed.
 
 ## Project status
 If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+
+## Build 04 data safety
+Schema v3 migrates v2 data while retaining the existing localStorage key. Before migration, the previous JSON is stored as a recovery snapshot. Storage errors lock edits rather than silently resetting. Settings includes recovery snapshot download and restore. JSON/text imports accept v2 and v3. Always export a separate backup before upgrading.
