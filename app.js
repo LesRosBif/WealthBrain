@@ -75,10 +75,13 @@ function pounds(n){return money(Math.round(n*100))}
 function taxIncome(profile){
  const gross=Math.max(0,Number(profile.salary)||0)+Math.max(0,Number(profile.bonus)||0)+Math.max(0,Number(profile.other)||0);
  const deductions=Math.max(0,Number(profile.deductions)||0);
- const ani=Math.max(0,gross+(Number(profile.interest)||0)+(Number(profile.dividends)||0)-deductions),pa=Math.max(0,12570-Math.max(0,ani-100000)/2);
- const taxable=Math.max(0,gross-pa-deductions);
+ const interest=Math.max(0,Number(profile.interest)||0),dividends=Math.max(0,Number(profile.dividends)||0);
+ const ani=Math.max(0,gross+interest+dividends-deductions);
+ const pa=Math.max(0,12570-Math.max(0,ani-100000)/2);
+ const taxable=Math.max(0,gross-deductions-pa);
  const basic=Math.min(taxable,37700),higher=Math.min(Math.max(0,taxable-37700),87440),additional=Math.max(0,taxable-125140);
- return {gross,ani,pa,tax:basic*.2+higher*.4+additional*.45,band:ani>125140?'Additional (45%)':ani>100000?'Higher (60% effective taper)':ani>50270?'Higher (40%)':ani>12570?'Basic (20%)':'No income tax'};
+ const tax=basic*.2+higher*.4+additional*.45;
+ return {gross,ani,pa,tax,taxable,band:ani>125140?'Additional (45%)':ani>100000?'Higher (personal allowance taper)':ani>50270?'Higher (40%)':ani>12570?'Basic (20%)':'No income tax'};
 }
 function taxRender(){
  const t=taxState(),owner=$('taxOwner');if(!owner)return;
@@ -93,11 +96,11 @@ function taxRender(){
  const acc=db.accounts.find(a=>a.id===x.accountId),cost=Number(x.cost)||0,value=Number(x.value)||0,eligible=(x.scheme==='eis'||x.scheme==='seis')&&x.eligible==='yes';
  const reliefRate=x.scheme==='seis'?.5:x.scheme==='eis'?.3:0;
  const relief=eligible?cost*reliefRate:0;
- return '<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>'+escapeHTML(acc?.name||'Unlinked')+' · '+escapeHTML(x.wrapper)+' · '+escapeHTML(x.scheme.toUpperCase())+' · '+escapeHTML(x.owner)+'</small></div><div><strong>'+pounds(value)+'</strong><br><small>Cost '+pounds(cost)+' · potential initial relief '+pounds(relief)+' · claimed '+pounds(Number(x.reliefClaimed)||0)+'</small></div></div>';
+ return '<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>'+escapeHTML(acc?.name||'Unlinked')+' · '+escapeHTML(x.wrapper)+' · '+escapeHTML(x.scheme.toUpperCase())+' · '+escapeHTML(x.owner)+'</small></div><div><strong>'+pounds(value)+'</strong><br><small>Cost '+pounds(cost)+' · potential initial relief (unverified) '+pounds(relief)+' · claimed '+pounds(Number(x.reliefClaimed)||0)+'</small></div></div>';
  }).join('')||'<p class="muted">No tax-specific holdings recorded.</p>';
  $('taxPensions').innerHTML=t.pensions.map(x=>{
  const account=db.accounts.find(a=>a.id===x.accountId);
- const remaining=Math.max(0,(Number(x.lsa)||268275)-(Number(x.used)||0));
+ const remaining=Math.max(0,Number(x.lsa??268275)-(Number(x.used)||0));
  const available=Math.min(remaining,Math.max(0,balance(account||{id:'missing'}))/100*.25);
  return '<div class="row"><div><strong>'+escapeHTML(account?.name||'Unlinked pension')+'</strong><br><small>Tax-free lump sum remaining allowance '+pounds(remaining)+'</small></div><strong>Illustrative available '+pounds(available)+'</strong></div>';
  }).join('')||'<p class="muted">No pension allowances recorded.</p>';
@@ -132,23 +135,33 @@ function taxBandSlices(amount,remainingBasic){
 }
 function incomeEstimate(p){
  const base=taxIncome(p),interest=Math.max(0,Number(p.interest)||0),dividends=Math.max(0,Number(p.dividends)||0);
- const taxableEarn=Math.max(0,base.gross-Math.max(0,Number(p.deductions)||0)-base.pa);
- const basicLeft=Math.max(0,TAX_RULES.basicLimit-taxableEarn);
+ // Non-savings income uses the bands first; savings then dividends.
+ // The starting rate for savings can be available when other income is low.
+ const startingRate=Math.max(0,5000-Math.max(0,base.taxable));
+ const startingUsed=Math.min(interest,startingRate);
+ const remainingInterest=interest-startingUsed;
  const savingsAllowance=base.ani>125140?0:base.ani>50270?500:1000;
- const taxableInterest=Math.max(0,interest-savingsAllowance);
- const interestSlice=taxBandSlices(taxableInterest,basicLeft);
- const interestTax=interestSlice.basic*.2+interestSlice.higher*(base.ani>125140?.45:.4);
- const divTaxable=Math.max(0,dividends-TAX_RULES.dividendAllowance);
- const dividendSlice=taxBandSlices(divTaxable,Math.max(0,basicLeft-taxableInterest));
- const dividendTax=dividendSlice.basic*.1075+dividendSlice.higher*(base.ani>125140?.3935:.3575);
- return {...base,interestTax,dividendTax,totalTax:base.tax+interestTax+dividendTax,savingsAllowance,dividendAllowance:TAX_RULES.dividendAllowance};
+ const interestAllowance=Math.min(remainingInterest,savingsAllowance);
+ const interestChargeable=Math.max(0,remainingInterest-interestAllowance);
+ const savingsBasic=Math.min(interestChargeable,Math.max(0,37700-base.taxable-startingUsed-interestAllowance));
+ const savingsHigher=Math.min(Math.max(0,interestChargeable-savingsBasic),Math.max(0,125140-Math.max(37700,base.taxable+interest)-savingsBasic));
+ const savingsAdditional=Math.max(0,interestChargeable-savingsBasic-savingsHigher);
+ const interestTax=savingsBasic*.2+savingsHigher*.4+savingsAdditional*.45;
+ const dividendAllowance=Math.min(dividends,500);
+ const dividendChargeable=Math.max(0,dividends-dividendAllowance);
+ const occupied=base.taxable+interest;
+ const dividendBasic=Math.min(dividendChargeable,Math.max(0,37700-occupied));
+ const dividendHigher=Math.min(Math.max(0,dividendChargeable-dividendBasic),Math.max(0,125140-Math.max(37700,occupied)-dividendBasic));
+ const dividendAdditional=Math.max(0,dividendChargeable-dividendBasic-dividendHigher);
+ const dividendTax=dividendBasic*.1075+dividendHigher*.3575+dividendAdditional*.3935;
+ return {...base,interestTax,dividendTax,totalTax:base.tax+interestTax+dividendTax,savingsAllowance,dividendAllowance:500};
 }
 function disposalEstimate(h,proceeds,cost,yearProfile,losses=0){
  const gain=Math.max(0,proceeds-cost),exempt=Math.max(0,gain-Math.max(0,losses)-TAX_RULES.cgtExemption);
  const tax=incomeEstimate(yearProfile||{}),basicRemaining=Math.max(0,TAX_RULES.basicLimit-Math.max(0,tax.gross-(Number(yearProfile?.deductions)||0)-tax.pa));
  const split=taxBandSlices(exempt,basicRemaining);
- const conditional=(h.wrapper==='isa'||h.wrapper==='sipp'||h.wrapper==='workplace')?'wrapper':(h.scheme==='eis'||h.scheme==='seis')&&h.eligible==='yes'&&h.issueDate&&((dateMs(today())-dateMs(h.issueDate))/86400000)>=365.25*3?'scheme':'none';
- return {gain,taxable:conditional==='none'?exempt:0,estimate:conditional==='none'?split.basic*.18+split.higher*.24:0,conditional};
+ const conditional=(h.wrapper==='isa'||h.wrapper==='sipp'||h.wrapper==='workplace')?'wrapper':(h.scheme==='eis'||h.scheme==='seis')&&h.eligible==='yes'&&h.issueDate&&((dateMs(today())-dateMs(h.issueDate))/86400000)>=365.25*3?'review':'none';
+ return {gain,taxable:conditional==='wrapper'?0:exempt,estimate:conditional==='wrapper'?0:split.basic*.18+split.higher*.24,conditional};
 }
 function pensionScenario(pensionValue,withdrawal,lsa,used){
  const requested=Math.min(Math.max(0,withdrawal),Math.max(0,pensionValue));
@@ -163,7 +176,7 @@ function taxExtraRender(){
  const list=$('taxHoldingActions');
  list.innerHTML=t.holdings.map(x=>{
  const cost=Number(x.cost)||0,value=Number(x.value)||0,d=disposalEstimate(x,value,cost,p);
- return '<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>Illustrative gain '+pounds(d.gain)+' · '+(d.conditional==='wrapper'?'Tax-exempt wrapper':d.conditional==='scheme'?'Potential qualifying EIS/SEIS exemption':'Estimated CGT '+pounds(d.estimate))+'</small></div><div><button type="button" data-tax-edit="'+escapeHTML(x.id)+'">Edit</button> <button type="button" data-tax-delete="'+escapeHTML(x.id)+'">Delete</button></div></div>';
+ return '<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>Illustrative gain '+pounds(d.gain)+' · '+(d.conditional==='wrapper'?'Tax-exempt wrapper':d.conditional==='review'?'EIS/SEIS: review conditions · provisional CGT '+pounds(d.estimate):'Estimated CGT '+pounds(d.estimate))+'</small></div><div><button type="button" data-tax-edit="'+escapeHTML(x.id)+'">Edit</button> <button type="button" data-tax-delete="'+escapeHTML(x.id)+'">Delete</button></div></div>';
  }).join('');
  const selected=$('taxPensionAccount').value,account=db.accounts.find(x=>x.id===selected);
  const record=t.pensions.find(x=>x.accountId===selected)||{};
