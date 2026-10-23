@@ -1,6 +1,6 @@
 'use strict';
 const KEY='personal-wealth-os-v2',RECOVERY_KEY='personal-wealth-os-recovery-v3',SCHEMA=3;
-const empty=()=>({version:SCHEMA,accounts:[],observations:[],transactions:[],plans:[],tax:{profiles:[],holdings:[],pensions:[]}});
+const empty=()=>({version:SCHEMA,accounts:[],observations:[],transactions:[],plans:[],tax:{profiles:[],holdings:[],pensions:[],disposals:[]}});
 function validateData(x){
  if(!x||typeof x!=='object'||![2,3].includes(x.version))throw Error('Unsupported data schema');
  for(const k of ['accounts','observations','transactions','plans'])if(!Array.isArray(x[k]))throw Error('Invalid '+k+' collection');
@@ -69,7 +69,7 @@ document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()
 // Portable text backups are JSON wrapped in readable headings. They can be pasted into Google Docs.
 
 /* Tax profile and holdings: all amounts are GBP minor units unless otherwise noted. */
-function taxState(){if(!db.tax)db.tax={profiles:[],holdings:[],pensions:[]};for(const k of ['profiles','holdings','pensions'])if(!Array.isArray(db.tax[k]))db.tax[k]=[];return db.tax}
+function taxState(){if(!db.tax)db.tax={profiles:[],holdings:[],pensions:[]};for(const k of ['profiles','holdings','pensions','disposals'])if(!Array.isArray(db.tax[k]))db.tax[k]=[];return db.tax}
 function taxYear(date){const d=new Date(date+'T12:00:00Z'),y=d.getUTCFullYear();return d.getUTCMonth()>3||(d.getUTCMonth()===3&&d.getUTCDate()>=6)?y:y-1}
 function pounds(n){return money(Math.round(n*100))}
 function taxIncome(profile){
@@ -104,7 +104,7 @@ function taxRender(){
  const available=Math.min(remaining,Math.max(0,balance(account||{id:'missing'}))/100*.25);
  return '<div class="row"><div><strong>'+escapeHTML(account?.name||'Unlinked pension')+'</strong><br><small>Tax-free lump sum remaining allowance '+pounds(remaining)+'</small></div><strong>Illustrative available '+pounds(available)+'</strong></div>';
  }).join('')||'<p class="muted">No pension allowances recorded.</p>';
- taxExtraRender();
+ taxExtraRender();renderDisposals();
 }
 
 const BACKUP_START='----- BEGIN PERSONAL WEALTH OS BACKUP JSON -----';
@@ -184,6 +184,32 @@ function taxExtraRender(){
  $('taxWithdrawalResult').textContent='Illustrative tax-free cash '+pounds(scenario.taxFree)+' · potentially taxable pension withdrawal '+pounds(scenario.taxable)+' · remaining pension '+pounds(scenario.remaining)+'. Taxable withdrawal is not yet converted into an income tax bill.';
 }
 
+
+function annualCGT(owner,year){
+ const t=taxState(),items=t.disposals.filter(x=>x.owner===owner&&taxYear(x.date)===year);
+ const gains=items.reduce((n,x)=>n+Math.max(0,Number(x.proceeds)-Number(x.cost)),0);
+ const losses=items.reduce((n,x)=>n+Math.max(0,Number(x.cost)-Number(x.proceeds)),0);
+ const taxable=Math.max(0,gains-losses-3000);
+ const profile=t.profiles.find(x=>x.owner===owner&&x.year===year)||{},income=incomeEstimate(profile);
+ const basicRemaining=Math.max(0,37700-income.taxable-(Number(profile.interest)||0)-(Number(profile.dividends)||0));
+ const basic=Math.min(taxable,basicRemaining);
+ return {count:items.length,gains,losses,taxable,tax:basic*.18+(taxable-basic)*.24};
+}
+function renderDisposals(){
+ const owner=$('taxOwner').value,year=Number($('taxYear').value),t=taxState(),result=annualCGT(owner,year);
+ $('taxCGTResult').textContent='Disposals '+result.count+' · Gains '+pounds(result.gains)+' · losses '+pounds(result.losses)+' · taxable '+pounds(result.taxable)+' · indicative CGT '+pounds(result.tax);
+ $('taxDisposals').innerHTML=t.disposals.filter(x=>x.owner===owner&&taxYear(x.date)===year).map(x=>'<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>'+escapeHTML(x.date)+' · proceeds '+pounds(Number(x.proceeds))+' · cost '+pounds(Number(x.cost))+'</small></div><button type="button" data-remove-disposal="'+escapeHTML(x.id)+'">Delete</button></div>').join('')||'<p class="muted">No taxable disposals recorded for this year.</p>';
+}
+function initDisposals(){
+ $('taxDisposalForm').addEventListener('submit',e=>{e.preventDefault();try{
+ const d=getForm(e.target);validateDate(d.date);
+ if(!d.name.trim()||!['self','spouse'].includes(d.owner))throw Error('Invalid disposal');
+ for(const k of ['cost','proceeds'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid amount');
+ taxState().disposals.push({...d,id:crypto.randomUUID()});persist();e.target.reset();toast('Disposal saved');
+ }catch(err){toast(err.message)}});
+ $('taxDisposals').addEventListener('click',e=>{const button=e.target.closest('[data-remove-disposal]');if(!button)return;if(!confirm('Delete this disposal?'))return;taxState().disposals=taxState().disposals.filter(x=>x.id!==button.dataset.removeDisposal);persist()});
+}
+
 function taxForms(){
  $('taxYear').value=taxYear(today());
  for(const id of ['taxOwner','taxYear'])$(id).addEventListener('change',taxRender);
@@ -200,4 +226,4 @@ function taxForms(){
  });
  $('taxPensionForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState();if(!db.accounts.some(x=>x.id===d.accountId&&x.type==='pension'))throw Error('Choose pension');if(Number(d.lsa)<0||Number(d.used)<0||!Number.isFinite(Number(d.lsa)+Number(d.used)))throw Error('Invalid allowance');t.pensions=t.pensions.filter(x=>x.accountId!==d.accountId);t.pensions.push(d);persist();toast('Pension allowance saved')}catch(err){toast(err.message)}});
 }
-taxForms();defaults();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+taxForms();initDisposals();defaults();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
