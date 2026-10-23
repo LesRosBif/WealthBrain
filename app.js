@@ -75,7 +75,7 @@ function pounds(n){return money(Math.round(n*100))}
 function taxIncome(profile){
  const gross=Math.max(0,Number(profile.salary)||0)+Math.max(0,Number(profile.bonus)||0)+Math.max(0,Number(profile.other)||0);
  const deductions=Math.max(0,Number(profile.deductions)||0);
- const ani=Math.max(0,gross-deductions),pa=Math.max(0,12570-Math.max(0,ani-100000)/2);
+ const ani=Math.max(0,gross+(Number(profile.interest)||0)+(Number(profile.dividends)||0)-deductions),pa=Math.max(0,12570-Math.max(0,ani-100000)/2);
  const taxable=Math.max(0,gross-pa-deductions);
  const basic=Math.min(taxable,37700),higher=Math.min(Math.max(0,taxable-37700),87440),additional=Math.max(0,taxable-125140);
  return {gross,ani,pa,tax:basic*.2+higher*.4+additional*.45,band:ani>125140?'Additional (45%)':ani>100000?'Higher (60% effective taper)':ani>50270?'Higher (40%)':ani>12570?'Basic (20%)':'No income tax'};
@@ -140,7 +140,7 @@ function incomeEstimate(p){
  const interestTax=interestSlice.basic*.2+interestSlice.higher*(base.ani>125140?.45:.4);
  const divTaxable=Math.max(0,dividends-TAX_RULES.dividendAllowance);
  const dividendSlice=taxBandSlices(divTaxable,Math.max(0,basicLeft-taxableInterest));
- const dividendTax=dividendSlice.basic*.0875+dividendSlice.higher*(base.ani>125140?.3935:.3375);
+ const dividendTax=dividendSlice.basic*.1075+dividendSlice.higher*(base.ani>125140?.3935:.3575);
  return {...base,interestTax,dividendTax,totalTax:base.tax+interestTax+dividendTax,savingsAllowance,dividendAllowance:TAX_RULES.dividendAllowance};
 }
 function disposalEstimate(h,proceeds,cost,yearProfile,losses=0){
@@ -159,7 +159,7 @@ function pensionScenario(pensionValue,withdrawal,lsa,used){
 function taxExtraRender(){
  const t=taxState(),owner=$('taxOwner').value,year=Number($('taxYear').value),p=t.profiles.find(x=>x.owner===owner&&x.year===year)||{};
  const result=incomeEstimate(p),el=$('taxExtendedResult');
- el.innerHTML='Estimated income tax including savings/dividends: <strong>'+pounds(result.totalTax)+'</strong><br><small>Non-savings '+pounds(result.tax)+' · savings '+pounds(result.interestTax)+' · dividends '+pounds(result.dividendTax)+'</small>';
+ el.innerHTML=(year!==2026?'<strong>Warning: calculations use 2026/27 rates, not the selected tax year.</strong><br>':'')+'Estimated income tax including savings/dividends: <strong>'+pounds(result.totalTax)+'</strong><br><small>Non-savings '+pounds(result.tax)+' · savings '+pounds(result.interestTax)+' · dividends '+pounds(result.dividendTax)+'</small>';
  const list=$('taxHoldingActions');
  list.innerHTML=t.holdings.map(x=>{
  const cost=Number(x.cost)||0,value=Number(x.value)||0,d=disposalEstimate(x,value,cost,p);
