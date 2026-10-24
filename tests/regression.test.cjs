@@ -152,3 +152,11 @@ test('account projections preserve fixed-rate starting value',()=>{
  const points=call('accountProjection',{id:'a',type:'investment',model:'fixed'},0);
  assert.equal(points.length,41);assert.equal(points[0],123400);assert.ok(points[1]>points[0]);
 });
+
+test('account details form includes the child-account toggle required by openAccount',()=>{
+ const html=fs.readFileSync('index.html','utf8');
+ const detail=html.split('<form id="accountDetailForm">')[1]?.split('</form>')[0];
+ assert.ok(detail,'Missing account details form');
+ assert.match(detail,/name="childAccount"/);
+ assert.match(html,/id="detailProjectionChart"/);
+});
