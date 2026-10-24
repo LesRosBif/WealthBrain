@@ -82,7 +82,34 @@ function renderScenarioSummary(series){
 }
 function updateScenario(){const series=scenarioForecasts();$('future').textContent=money(series[1][20].net);draw(series);renderScenarioSummary(series)}
 function setupScenario(){for(const id of ['scenarioAmount','scenarioFrom','scenarioTo','scenarioAccount'])$(id).addEventListener('input',updateScenario)}
-function draw(series){const svg=$('chart');const vals=series.flatMap(s=>s.map(x=>x.net));let lo=Math.min(0,...vals),hi=Math.max(1,...vals);if(hi===lo)hi++;const colors=['#f59e72','#6ca6ff','#5dd6a2'];svg.innerHTML=series.map((s,i)=>`<polyline fill="none" stroke="${colors[i]}" stroke-width="2.5" points="${s.map((p,j)=>`${(j/40*330+5).toFixed(1)},${(210-(p.net-lo)/(hi-lo)*195).toFixed(1)}`).join(' ')}"/>`).join('')+`<text x="5" y="218" fill="#9fb0c7" font-size="11">Today</text><text x="302" y="218" fill="#9fb0c7" font-size="11">+40y</text>`}
+let selectedProjectionYear=20,latestProjectionSeries=null;
+function projectionAtYear(series,year){return series.map(s=>s[year]?.net??0)}
+function selectProjectionYear(year){
+ selectedProjectionYear=Math.max(0,Math.min(40,Math.round(year)));
+ if(latestProjectionSeries)draw(latestProjectionSeries);
+}
+function draw(series){
+ latestProjectionSeries=series;
+ const svg=$('chart'),vals=series.flatMap(s=>s.map(x=>x.net));
+ let lo=Math.min(0,...vals),hi=Math.max(1,...vals);if(hi===lo)hi++;
+ const colors=['#f59e72','#6ca6ff','#5dd6a2'],x=selectedProjectionYear/40*330+5;
+ const y=v=>210-(v-lo)/(hi-lo)*195;
+ svg.innerHTML=series.map((s,i)=>`<polyline fill="none" stroke="${colors[i]}" stroke-width="2.5" points="${s.map((p,j)=>`${(j/40*330+5).toFixed(1)},${y(p.net).toFixed(1)}`).join(' ')}"/>`).join('')+
+ `<line x1="${x}" x2="${x}" y1="8" y2="210" stroke="#dce8f8" stroke-dasharray="4 4" stroke-width="1.5"/>`+
+ series.map((s,i)=>`<circle cx="${x}" cy="${y(s[selectedProjectionYear].net)}" r="4" fill="${colors[i]}" stroke="#0c1421" stroke-width="1.5"/>`).join('')+
+ `<text x="5" y="218" fill="#9fb0c7" font-size="11">Today</text><text x="302" y="218" fill="#9fb0c7" font-size="11">+40y</text>`;
+ const values=projectionAtYear(series,selectedProjectionYear);
+ $('projectionYear').textContent=selectedProjectionYear===0?'Today':'Year '+selectedProjectionYear;
+ for(let n=0;n<3;n++)$('projectionValue'+n).textContent=money(values[n]);
+ $('projectionYearSlider').value=selectedProjectionYear;
+}
+function initProjectionSelection(){
+ const svg=$('chart');
+ const pick=e=>{const rect=svg.getBoundingClientRect();if(!rect.width)return;const x=(e.clientX-rect.left)/rect.width*340;selectProjectionYear((x-5)/330*40)};
+ svg.addEventListener('pointerdown',e=>{pick(e);if(svg.setPointerCapture)svg.setPointerCapture(e.pointerId)});
+ svg.addEventListener('pointermove',e=>{if(e.buttons||e.pressure>0)pick(e)});
+ $('projectionYearSlider').addEventListener('input',e=>selectProjectionYear(Number(e.target.value)));
+}
 function validateDate(s){if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||!Number.isFinite(dateMs(s)))throw Error('Invalid date')}
 function handle(id,fn){$(id).addEventListener('submit',e=>{e.preventDefault();try{fn(getForm(e.target));persist();e.target.reset();defaults();toast('Saved on this device')}catch(err){toast('Error: '+err.message)}})}
 handle('accountForm',d=>{validateDate(d.date);if(!d.name.trim()||!Number.isFinite(Number(d.balance))||Number(d.balance)<0)throw Error('Invalid account');const id=crypto.randomUUID();db.accounts.push({id,name:d.name.trim(),type:d.type,accessibility:d.accessibility,model:d.model,rate:Number(d.rate)/100});db.observations.push({id:crypto.randomUUID(),accountId:id,date:d.date,balance:minor(d.balance),notes:'Opening balance'})});
@@ -317,4 +344,4 @@ function taxForms(){
  });
  $('taxPensionForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState();if(!db.accounts.some(x=>x.id===d.accountId&&x.type==='pension'))throw Error('Choose pension');if(Number(d.lsa)<0||Number(d.used)<0||!Number.isFinite(Number(d.lsa)+Number(d.used)))throw Error('Invalid allowance');t.pensions=t.pensions.filter(x=>x.accountId!==d.accountId);t.pensions.push(d);persist();toast('Pension allowance saved')}catch(err){toast(err.message)}});
 }
-taxForms();initDisposals();defaults();setupScenario();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+taxForms();initDisposals();defaults();setupScenario();initProjectionSelection();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
