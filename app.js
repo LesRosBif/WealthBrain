@@ -35,7 +35,17 @@ for(const account of db.accounts){
  potGroups.get(pot).push(account);
 }
 const priorOpen=new Set([...$('summaryAccounts').querySelectorAll('details[open]')].map(x=>x.dataset.pot));
-const accountButton=account=>`<button type="button" class="account-entry" data-account-id="${escapeHTML(account.id)}"><span><strong>${escapeHTML(account.name)}</strong><br><small>${escapeHTML(account.owner||'')} · ${escapeHTML(account.type)}</small></span><span><strong>${money(account.type==='debt'?-Math.abs(balance(account)):balance(account))}</strong><br><small>Details →</small></span></button>`;
+function ownerStyle(owner){
+ const normalized=(owner||'').trim().toLowerCase();
+ if(!normalized)return {color:'#94a3b8',label:'Unassigned'};
+ const palette=['#60a5fa','#f472b6','#34d399','#fbbf24','#a78bfa','#fb923c','#2dd4bf','#f87171'];
+ let hash=0;for(const char of normalized)hash=(hash*31+char.charCodeAt(0))>>>0;
+ return {color:palette[hash%palette.length],label:owner.trim()};
+}
+const accountButton=account=>{
+ const owner=ownerStyle(account.owner);
+ return `<button type="button" class="account-entry" data-account-id="${escapeHTML(account.id)}" style="border-left:4px solid ${owner.color};padding-left:10px"><span><strong>${escapeHTML(account.name)}</strong><br><small><span class="owner-pill" style="--owner-color:${owner.color}">${escapeHTML(owner.label)}</span> · ${escapeHTML(account.type)}</small></span><span><strong>${money(account.type==='debt'?-Math.abs(balance(account)):balance(account))}</strong><br><small>Details →</small></span></button>`;
+};
 $('summaryAccounts').innerHTML=[...potGroups.entries()].sort((x,y)=>x[0].localeCompare(y[0])).map(([pot,accounts])=>{
  const total=accounts.reduce((sum,account)=>sum+(account.type==='debt'?-Math.abs(balance(account)):balance(account)),0);
  const open=priorOpen.has(pot)?' open':'';
