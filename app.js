@@ -28,7 +28,7 @@ function observed(a){const os=db.observations.filter(o=>o.accountId===a.id).sort
 function rate(a,adjust){let r=a.rate;const o=observed(a);if(o!==null){if(a.model==='historical')r=o;else if(a.model==='blended')r=.7*a.rate+.3*o}if(a.model!=='fixed'&&a.model!=='debt')r+=adjust;return Math.max(-.5,Math.min(.5,r))}
 function monthDate(start,m){const d=new Date(start+'T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+m);return d.toISOString().slice(0,10)}
 function forecast(adjust,scenario){const bals=Object.fromEntries(db.accounts.map(a=>[a.id,balance(a)]));const series=[];const start=today();for(let m=0;m<=480;m++){if(m){const d=monthDate(start,m);for(const a of db.accounts)bals[a.id]=Math.round(bals[a.id]*Math.pow(1+rate(a,adjust),1/12));for(const p of db.plans){if(d<p.start||(p.end&&d>p.end))continue;const elapsed=Math.max(0,yearDays(p.start,d)/365.25);bals[p.accountId]=(bals[p.accountId]||0)+Math.round(p.amount*Math.pow(1+p.escalation,elapsed))}if(scenario&&scenario.accountId&&scenario.amount&&m>=scenario.from*12&&m<=scenario.to*12)bals[scenario.accountId]=(bals[scenario.accountId]||0)+scenario.amount}if(m%12===0){let net=0,liquid=0;for(const a of db.accounts){const v=bals[a.id];net+=a.type==='debt'?-Math.abs(v):v;if(a.accessibility==='liquid'&&a.type!=='debt')liquid+=v}series.push({year:m/12,net,liquid})}}return series}
-function render(){taxRender();const net=db.accounts.reduce((s,a)=>s+(a.type==='debt'?-Math.abs(balance(a)):balance(a)),0);const liquid=db.accounts.reduce((s,a)=>s+(a.type!=='debt'&&a.accessibility==='liquid'?balance(a):0),0);$('net').textContent=money(net);$('liquid').textContent=money(liquid);$('count').textContent=db.accounts.length;refreshScenarioAccounts();const scenarios=scenarioForecasts();$('future').textContent=money(scenarios[1][20].net);draw(scenarios);renderScenarioSummary(scenarios);renderMonthly();const accountRows=db.accounts.map(a=>`<div class="row"><div><strong>${escapeHTML(a.name)}</strong><br><small>${escapeHTML(a.type)} · ${escapeHTML(a.model)} · ${(a.rate*100).toFixed(1)}%</small></div><div style="text-align:right"><strong>${money(balance(a))}</strong><br><small>${observed(a)===null?'No return history':(observed(a)*100).toFixed(1)+'% observed p.a.'}</small></div></div>`).join('');$('accountList').innerHTML=accountRows||'<p class="muted">Add your first account above.</p>';$('summaryAccounts').innerHTML=accountRows||'<p class="muted">No accounts yet.</p>';
+function render(){taxRender();const net=db.accounts.reduce((s,a)=>s+(a.type==='debt'?-Math.abs(balance(a)):balance(a)),0);const liquid=db.accounts.reduce((s,a)=>s+(a.type!=='debt'&&a.accessibility==='liquid'?balance(a):0),0);$('net').textContent=money(net);$('liquid').textContent=money(liquid);$('count').textContent=db.accounts.length;refreshScenarioAccounts();const scenarios=scenarioForecasts();$('future').textContent=money(scenarios[1][20].net);draw(scenarios);renderScenarioSummary(scenarios);renderMonthly();const accountRows=db.accounts.map(a=>`<button type="button" class="account-entry" data-account-id="${escapeHTML(a.id)}"><span><strong>${escapeHTML(a.name)}</strong><br><small>${escapeHTML(a.institution||'')} · ${escapeHTML(a.owner||'')} · ${escapeHTML(a.purpose||a.type)}</small></span><span><strong>${money(a.type==='debt'?-Math.abs(balance(a)):balance(a))}</strong><br><small>Details →</small></span></button>`).join('');$('accountList').innerHTML=accountRows||'<p class="muted">Add your first account above.</p>';$('summaryAccounts').innerHTML=accountRows||'<p class="muted">No accounts yet.</p>';
 const opts=db.accounts.map(a=>`<option value="${a.id}">${escapeHTML(a.name)}</option>`).join('');for(const id of ['reviewAccount','planAccount','transferFrom','transferTo']){const el=$(id),prev=el.value;el.innerHTML=opts;if([...el.options].some(o=>o.value===prev))el.value=prev}
 $('observations').innerHTML=db.observations.slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,20).map(o=>`<div class="row"><div><strong>${escapeHTML(db.accounts.find(a=>a.id===o.accountId)?.name||'Deleted')}</strong><br><small>${o.date} · ${escapeHTML(o.notes)}</small></div><strong>${money(o.balance)}</strong></div>`).join('')||'<p class="muted">No observations yet.</p>';
 $('planList').innerHTML=db.plans.map(p=>`<div class="row"><div><strong>${escapeHTML(p.name)}</strong><br><small>${escapeHTML(db.accounts.find(a=>a.id===p.accountId)?.name)} · from ${p.start}</small></div><strong>${money(p.amount)}/mo</strong></div>`).join('')||'<p class="muted">No recurring plans yet.</p>'}
@@ -90,7 +90,52 @@ handle('reviewForm',d=>{const a=db.accounts.find(a=>a.id===d.accountId);if(!a)th
 handle('planForm',d=>{if(!db.accounts.some(a=>a.id===d.accountId))throw Error('Choose account');validateDate(d.start);if(d.end){validateDate(d.end);if(d.end<d.start)throw Error('End before start')}db.plans.push({id:crypto.randomUUID(),name:d.name,accountId:d.accountId,amount:minor(d.amount),start:d.start,end:d.end,escalation:Number(d.escalation)/100})});
 handle('transferForm',d=>{if(d.from===d.to)throw Error('Choose two different accounts');if(!db.accounts.some(a=>a.id===d.from)||!db.accounts.some(a=>a.id===d.to))throw Error('Choose accounts');validateDate(d.date);const amt=minor(d.amount);if(amt<=0)throw Error('Amount must be positive');const group=crypto.randomUUID();db.transactions.push({id:crypto.randomUUID(),group,accountId:d.from,date:d.date,amount:-amt,kind:'transfer'},{id:crypto.randomUUID(),group,accountId:d.to,date:d.date,amount:amt,kind:'transfer'})});
 function defaults(){document.querySelectorAll('input[type="date"]').forEach(el=>{if(!el.value&&!['end','flowDate'].includes(el.name))el.value=today()})}
-document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));$(b.dataset.tab).classList.remove('hide');document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');window.scrollTo(0,0)}));
+let accountReturnTab='overview',selectedAccountId=null;
+function showTab(tab){document.querySelectorAll('main section').forEach(s=>s.classList.add('hide'));$(tab).classList.remove('hide');document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));window.scrollTo(0,0)}
+document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
+function accountDeletionImpact(id){
+ const groups=new Set(db.transactions.filter(t=>t.accountId===id&&t.kind==='transfer'&&t.group).map(t=>t.group));
+ return {groups,transactions:db.transactions.filter(t=>t.accountId===id||t.kind==='transfer'&&groups.has(t.group))};
+}
+function openAccount(id){
+ const account=db.accounts.find(a=>a.id===id);if(!account)return;
+ const active=document.querySelector('nav button.active');if(active)accountReturnTab=active.dataset.tab;
+ selectedAccountId=id;const f=$('accountDetailForm');
+ for(const key of ['name','institution','owner','purpose','type','accessibility','model'])f.elements[key].value=account[key]||({type:'other',accessibility:'restricted',model:'assumed'}[key]||'');
+ f.elements.rate.value=(Number(account.rate)||0)*100;
+ $('detailHeading').textContent=account.name;
+ $('detailBalance').textContent=money(account.type==='debt'?-Math.abs(balance(account)):balance(account));
+ $('detailHistory').innerHTML=db.observations.filter(o=>o.accountId===id).sort((x,y)=>y.date.localeCompare(x.date)).map(o=>'<div class="row"><small>'+escapeHTML(o.date)+' · '+escapeHTML(o.notes||'')+'</small><strong>'+money(o.balance)+'</strong></div>').join('')||'<p class="muted">No valuations recorded.</p>';
+ $('detailFlows').textContent=db.transactions.filter(t=>t.accountId===id).length+' recorded transaction entries';
+ showTab('accountDetail');
+}
+for(const id of ['summaryAccounts','accountList'])$(id).addEventListener('click',e=>{const b=e.target.closest('[data-account-id]');if(b)openAccount(b.dataset.accountId)});
+$('detailBack').addEventListener('click',()=>showTab(accountReturnTab));
+$('accountDetailForm').addEventListener('submit',e=>{e.preventDefault();try{
+ const account=db.accounts.find(a=>a.id===selectedAccountId);if(!account)throw Error('Account not found');
+ const d=getForm(e.target),rate=Number(d.rate);
+ if(!d.name.trim()||!Number.isFinite(rate)||rate< -50||rate>100)throw Error('Check name and rate');
+ if(!['cash','investment','pension','property','debt','private','other'].includes(d.type)||!['liquid','restricted'].includes(d.accessibility)||!['blended','fixed','assumed','historical','debt'].includes(d.model))throw Error('Invalid account properties');
+ Object.assign(account,{name:d.name.trim(),institution:d.institution.trim(),owner:d.owner.trim(),purpose:d.purpose.trim(),type:d.type,accessibility:d.accessibility,model:d.model,rate:rate/100});
+ persist();openAccount(account.id);toast('Account updated');
+ }catch(err){toast(err.message)}});
+$('detailUpdateBalance').addEventListener('click',()=>{showTab('review');$('reviewAccount').value=selectedAccountId});
+$('detailDelete').addEventListener('click',()=>{
+ const account=db.accounts.find(a=>a.id===selectedAccountId);if(!account)return;
+ const impact=accountDeletionImpact(account.id);
+ const observations=db.observations.filter(o=>o.accountId===account.id).length;
+ const plans=db.plans.filter(x=>x.accountId===account.id).length;
+ const holdings=taxState().holdings.filter(x=>x.accountId===account.id).length;
+ const pensions=taxState().pensions.filter(x=>x.accountId===account.id).length;
+ if(!confirm('Delete '+account.name+' and '+observations+' valuations, '+impact.transactions.length+' transaction entries (including '+impact.groups.size+' complete linked transfers), '+plans+' plans, '+holdings+' holdings and '+pensions+' pension records? Other accounts\' recorded balances will not change. Export a backup first.'))return;
+ db.accounts=db.accounts.filter(x=>x.id!==account.id);
+ db.observations=db.observations.filter(x=>x.accountId!==account.id);
+ const remove=new Set(impact.transactions.map(x=>x.id));db.transactions=db.transactions.filter(x=>!remove.has(x.id));
+ db.plans=db.plans.filter(x=>x.accountId!==account.id);
+ taxState().holdings=taxState().holdings.filter(x=>x.accountId!==account.id);
+ taxState().pensions=taxState().pensions.filter(x=>x.accountId!==account.id);
+ selectedAccountId=null;persist();showTab(accountReturnTab);toast('Account deleted');
+});
 // Portable text backups are JSON wrapped in readable headings. They can be pasted into Google Docs.
 
 /* Tax profile and holdings: all amounts are GBP minor units unless otherwise noted. */
