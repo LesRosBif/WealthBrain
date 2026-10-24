@@ -65,8 +65,8 @@ function renderMonthly(){
  const input=$('reviewMonth');if(!input)return;if(!input.value)input.value=today().slice(0,7);
  const end=monthEnd(input.value),prev=monthEnd(new Date(Date.UTC(Number(input.value.slice(0,4)),Number(input.value.slice(5,7))-2,1)).toISOString().slice(0,7));
  const now=monthlyPosition(end),before=monthlyPosition(prev);
- $('monthNet').textContent=money(now.net);$('monthChange').textContent=now.covered===db.accounts.length&&before.covered===db.accounts.length?money(now.net-before.net):'Insufficient history';
- $('monthCoverage').textContent=now.covered+' of '+db.accounts.length+' accounts';
+ $('monthNet').textContent=money(now.net);$('monthChange').textContent=now.covered===db.accounts.filter(a=>!a.childAccount).length&&before.covered===db.accounts.filter(a=>!a.childAccount).length?money(now.net-before.net):'Insufficient history';
+ $('monthCoverage').textContent=now.covered+' of '+db.accounts.filter(a=>!a.childAccount).length+' household accounts';
  const rows=db.accounts.map(a=>{const obs=db.observations.filter(o=>o.accountId===a.id&&o.date<=end).sort((x,y)=>y.date.localeCompare(x.date))[0];const old=db.observations.filter(o=>o.accountId===a.id&&o.date<=prev).sort((x,y)=>y.date.localeCompare(x.date))[0];
  const flows=old&&obs?db.transactions.filter(t=>t.accountId===a.id&&t.date>old.date&&t.date<=obs.date).reduce((n,t)=>n+t.amount,0):null;
  const change=old&&obs?obs.balance-old.balance:null;const residual=change!==null&&flows!==null?change-flows:null;

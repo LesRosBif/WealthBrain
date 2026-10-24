@@ -139,3 +139,16 @@ test('deleting an account identifies both sides of linked transfers without unre
  assert.deepEqual(Array.from(result.transactions.map(x=>x.id)).sort(),['in','out']);
  assert.equal(result.groups.size,1);
 });
+
+test('child accounts are excluded from monthly household net worth',()=>{
+ const db={accounts:[{id:'adult',type:'cash'},{id:'child',type:'investment',childAccount:true}],observations:[{accountId:'adult',date:'2026-10-01',balance:10000},{accountId:'child',date:'2026-10-01',balance:50000}]};
+ const {call}=engine(['monthlyPosition'],{db});
+ const r=call('monthlyPosition','2026-10-31');
+ assert.equal(r.net,10000);assert.equal(r.covered,1);
+});
+test('account projections preserve fixed-rate starting value',()=>{
+ const db={plans:[]};
+ const {call}=engine(['accountProjection'],{db,today:()=> '2026-10-24',balance:()=>123400,rate:()=>0.05,monthDate:()=> '2026-11-24'});
+ const points=call('accountProjection',{id:'a',type:'investment',model:'fixed'},0);
+ assert.equal(points.length,41);assert.equal(points[0],123400);assert.ok(points[1]>points[0]);
+});
