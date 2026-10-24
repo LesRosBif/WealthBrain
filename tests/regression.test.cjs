@@ -126,3 +126,16 @@ test('fixture references only fictional IDs and balances use integer pennies',()
  assert.ok(fixture.tax.holdings.every(h=>ids.has(h.accountId)));
  assert.ok(fixture.tax.pensions.every(p=>ids.has(p.accountId)));
 });
+
+test('deleting an account identifies both sides of linked transfers without unrelated transactions',()=>{
+ const {call}=engine(['accountDeletionImpact'],{db:{transactions:[
+  {id:'out',accountId:'a',kind:'transfer',group:'pair1'},
+  {id:'in',accountId:'b',kind:'transfer',group:'pair1'},
+  {id:'other',accountId:'b',kind:'external'},
+  {id:'unrelated',accountId:'b',kind:'transfer',group:'pair2'},
+  {id:'unrelated2',accountId:'c',kind:'transfer',group:'pair2'}
+ ]}});
+ const result=call('accountDeletionImpact','a');
+ assert.deepEqual(Array.from(result.transactions.map(x=>x.id)).sort(),['in','out']);
+ assert.equal(result.groups.size,1);
+});
