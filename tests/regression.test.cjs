@@ -160,3 +160,16 @@ test('account details form includes the child-account toggle required by openAcc
  assert.match(detail,/name="childAccount"/);
  assert.match(html,/id="detailProjectionChart"/);
 });
+
+test('historical net worth carries valuations forward without backfilling and excludes children',()=>{
+ const db={accounts:[{id:'cash',type:'cash'},{id:'debt',type:'debt'},{id:'child',type:'investment',childAccount:true}],observations:[
+ {accountId:'cash',date:'2024-01-01',balance:10000},
+ {accountId:'cash',date:'2024-03-01',balance:15000},
+ {accountId:'debt',date:'2024-02-01',balance:2000},
+ {accountId:'child',date:'2024-01-01',balance:50000}
+ ]};
+ const {call}=engine(['historicalNetWorth'],{db,today:()=> '2024-04-01'});
+ const result=call('historicalNetWorth');
+ assert.deepEqual(Array.from(result.map(x=>x.net)),[10000,8000,13000]);
+ assert.deepEqual(Array.from(result.map(x=>x.covered)),[1,2,2]);
+});
