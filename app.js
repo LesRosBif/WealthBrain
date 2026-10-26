@@ -138,10 +138,10 @@ function draw(series){
  (mode==='historic'?'':series.map((s,i)=>'<polyline fill="none" stroke="'+colors[i]+'" stroke-width="2.5" points="'+s.map((p,j)=>xFuture(j).toFixed(1)+','+y(p.net).toFixed(1)).join(' ')+'"/>').join(''))+
  (markerX===null?'':'<line x1="'+markerX+'" x2="'+markerX+'" y1="8" y2="210" stroke="#dce8f8" stroke-dasharray="4 4"/>')+
  (past?'<circle cx="'+markerX+'" cy="'+y(past.net)+'" r="5" fill="#e9e3b1"/>':mode==='historic'?'':series.map((s,i)=>'<circle cx="'+markerX+'" cy="'+y(s[selectedProjectionYear].net)+'" r="4" fill="'+colors[i]+'"/>').join(''))+
- '<text x="5" y="218" fill="#9fb0c7" font-size="11">'+(mode==='forecast'?'Today':history.length?first.slice(0,4):'Today')+'</text>'+
- (mode==='full'?'<text x="'+Math.max(5,xDate(now)-15)+'" y="218" fill="#9fb0c7" font-size="11">Today</text>':'')+
- (mode==='historic'?'':'<text x="300" y="218" fill="#9fb0c7" font-size="11">+40y</text>');
- $('projectionYear').textContent=past?'Historical · '+past.date:mode==='historic'?'Historical net worth':(selectedProjectionYear===0?'Today':'Year '+selectedProjectionYear);
+ '<text x="5" y="218" fill="#9fb0c7" font-size="11">'+(mode==='forecast'?now:history.length?first:now)+'</text>'+
+ (mode==='full'?'<text x="'+Math.max(5,xDate(now)-15)+'" y="218" fill="#9fb0c7" font-size="11">'+now+'</text>':'')+
+ (mode==='historic'?'':'<text x="278" y="218" fill="#9fb0c7" font-size="11">'+monthDate(now,480)+'</text>');
+ $('projectionYear').textContent=past?'Historical · '+past.date:mode==='historic'?'Historical net worth':(selectedProjectionYear===0?now:monthDate(now,selectedProjectionYear*12));
  for(let n=0;n<3;n++)$('projectionValue'+n).textContent=past?(n===1?money(past.net):'—'):mode==='historic'?'—':money(series[n][selectedProjectionYear].net);
  $('projectionYearSlider').value=selectedProjectionYear;
  $('historyCoverage').textContent=past?past.covered+' of '+past.total+' household accounts valued by this date. Earlier accounts without observations are excluded.':mode==='forecast'?'Forecast only · illustrative nominal GBP.':history.length?'Historical values carry forward from each account’s latest recorded observation; coverage gaps may cause jumps.':'No historical valuations recorded yet.';
