@@ -104,7 +104,8 @@ function renderScenarioSummary(series){
 }
 function updateScenario(){const series=scenarioForecasts();$('future').textContent=money(series[1][20].net);draw(series);renderScenarioSummary(series)}
 function setupScenario(){for(const id of ['scenarioAmount','scenarioFrom','scenarioTo','scenarioAccount'])$(id).addEventListener('input',updateScenario)}
-let selectedProjectionYear=20,selectedHistoricalDate=null,latestProjectionSeries=null;
+let selectedProjectionYear=20,selectedHistoricalDate=null,latestProjectionSeries=null,wealthChartMode="full";
+function setWealthChartMode(mode){if(!["full","historic","forecast"].includes(mode))return;wealthChartMode=mode;if(mode==="historic"){const history=historicalNetWorth();selectedHistoricalDate=history.at(-1)?.date||null}else selectedHistoricalDate=null;document.querySelectorAll("[data-wealth-mode]").forEach(b=>{const active=b.dataset.wealthMode===mode;b.classList.toggle("active",active);b.setAttribute("aria-pressed",String(active))});if(latestProjectionSeries)draw(latestProjectionSeries)}
 function historicalNetWorth(){
  const eligible=db.accounts.filter(a=>!a.childAccount),dates=[...new Set(db.observations.filter(o=>eligible.some(a=>a.id===o.accountId)&&o.date<=today()).map(o=>o.date))].sort();
  const snapshots=new Map();
@@ -124,43 +125,49 @@ function selectProjectionYear(year){selectedHistoricalDate=null;selectedProjecti
 function selectHistoricalDate(date){selectedHistoricalDate=date;if(latestProjectionSeries)draw(latestProjectionSeries)}
 function draw(series){
  latestProjectionSeries=series;
- const svg=$('chart'),history=historicalNetWorth(),now=today(),first=history[0]?.date||now;
- const startMs=Date.parse(first+'T12:00:00Z'),nowMs=Date.parse(now+'T12:00:00Z'),endMs=Date.parse(monthDate(now,480)+'T12:00:00Z');
+ const svg=$('chart'),history=historicalNetWorth(),now=today(),first=history[0]?.date||now,mode=wealthChartMode;
+ const startMs=Date.parse((mode==='forecast'?now:first)+'T12:00:00Z'),nowMs=Date.parse(now+'T12:00:00Z'),endMs=Date.parse((mode==='historic'?now:monthDate(now,480))+'T12:00:00Z');
  const xDate=date=>5+(Date.parse(date+'T12:00:00Z')-startMs)/Math.max(1,endMs-startMs)*330;
- const xFuture=year=>5+(nowMs-startMs+(endMs-nowMs)*year/40)/Math.max(1,endMs-startMs)*330;
- const vals=series.flatMap(s=>s.map(x=>x.net)).concat(history.map(x=>x.net));
+ const xFuture=year=>5+(nowMs-startMs+(Date.parse(monthDate(now,480)+'T12:00:00Z')-nowMs)*year/40)/Math.max(1,endMs-startMs)*330;
+ const vals=(mode==='historic'?[]:series.flatMap(s=>s.map(x=>x.net))).concat(mode==='forecast'?[]:history.map(x=>x.net));
  let lo=Math.min(0,...vals),hi=Math.max(1,...vals);if(hi===lo)hi++;
  const y=v=>210-(v-lo)/(hi-lo)*195,colors=['#f59e72','#6ca6ff','#5dd6a2'];
- const historyPoints=history.map(p=>xDate(p.date).toFixed(1)+','+y(p.net).toFixed(1)).join(' ');
- const past=selectedHistoricalDate&&history.find(p=>p.date===selectedHistoricalDate);
- const markerX=past?xDate(past.date):xFuture(selectedProjectionYear);
- svg.innerHTML=(history.length>1?'<polyline fill="none" stroke="#e9e3b1" stroke-width="3" points="'+historyPoints+'"/>':'')+
- series.map((s,i)=>'<polyline fill="none" stroke="'+colors[i]+'" stroke-width="2.5" points="'+s.map((p,j)=>xFuture(j).toFixed(1)+','+y(p.net).toFixed(1)).join(' ')+'"/>').join('')+
- '<line x1="'+markerX+'" x2="'+markerX+'" y1="8" y2="210" stroke="#dce8f8" stroke-dasharray="4 4"/>'+
- (past?'<circle cx="'+markerX+'" cy="'+y(past.net)+'" r="5" fill="#e9e3b1"/>':series.map((s,i)=>'<circle cx="'+markerX+'" cy="'+y(s[selectedProjectionYear].net)+'" r="4" fill="'+colors[i]+'"/>').join(''))+
- '<text x="5" y="218" fill="#9fb0c7" font-size="11">'+(history.length?first.slice(0,4):'Today')+'</text><text x="'+Math.max(5,xDate(now)-15)+'" y="218" fill="#9fb0c7" font-size="11">Today</text><text x="300" y="218" fill="#9fb0c7" font-size="11">+40y</text>';
- $('projectionYear').textContent=past?'Historical · '+past.date:(selectedProjectionYear===0?'Today':'Year '+selectedProjectionYear);
- for(let n=0;n<3;n++)$('projectionValue'+n).textContent=past?(n===1?money(past.net):'—'):money(series[n][selectedProjectionYear].net);
+ const past=mode!=='forecast'&&selectedHistoricalDate&&history.find(p=>p.date===selectedHistoricalDate);
+ const markerX=past?xDate(past.date):mode==='historic'?null:xFuture(selectedProjectionYear);
+ svg.innerHTML=(mode!=='forecast'&&history.length>1?'<polyline fill="none" stroke="#e9e3b1" stroke-width="3" points="'+history.map(p=>xDate(p.date).toFixed(1)+','+y(p.net).toFixed(1)).join(' ')+'"/>':'')+
+ (mode==='historic'?'':series.map((s,i)=>'<polyline fill="none" stroke="'+colors[i]+'" stroke-width="2.5" points="'+s.map((p,j)=>xFuture(j).toFixed(1)+','+y(p.net).toFixed(1)).join(' ')+'"/>').join(''))+
+ (markerX===null?'':'<line x1="'+markerX+'" x2="'+markerX+'" y1="8" y2="210" stroke="#dce8f8" stroke-dasharray="4 4"/>')+
+ (past?'<circle cx="'+markerX+'" cy="'+y(past.net)+'" r="5" fill="#e9e3b1"/>':mode==='historic'?'':series.map((s,i)=>'<circle cx="'+markerX+'" cy="'+y(s[selectedProjectionYear].net)+'" r="4" fill="'+colors[i]+'"/>').join(''))+
+ '<text x="5" y="218" fill="#9fb0c7" font-size="11">'+(mode==='forecast'?'Today':history.length?first.slice(0,4):'Today')+'</text>'+
+ (mode==='full'?'<text x="'+Math.max(5,xDate(now)-15)+'" y="218" fill="#9fb0c7" font-size="11">Today</text>':'')+
+ (mode==='historic'?'':'<text x="300" y="218" fill="#9fb0c7" font-size="11">+40y</text>');
+ $('projectionYear').textContent=past?'Historical · '+past.date:mode==='historic'?'Historical net worth':(selectedProjectionYear===0?'Today':'Year '+selectedProjectionYear);
+ for(let n=0;n<3;n++)$('projectionValue'+n).textContent=past?(n===1?money(past.net):'—'):mode==='historic'?'—':money(series[n][selectedProjectionYear].net);
  $('projectionYearSlider').value=selectedProjectionYear;
- $('historyCoverage').textContent=past?past.covered+' of '+past.total+' household accounts valued by this date. Earlier accounts without observations are excluded.':history.length?'Historical line: latest recorded value carried forward at each update; gaps in coverage may create jumps.':'No historical valuations recorded yet.';
+ $('historyCoverage').textContent=past?past.covered+' of '+past.total+' household accounts valued by this date. Earlier accounts without observations are excluded.':mode==='forecast'?'Forecast only · illustrative nominal GBP.':history.length?'Historical values carry forward from each account’s latest recorded observation; coverage gaps may cause jumps.':'No historical valuations recorded yet.';
  $('historyYearSlider').max=Math.max(0,history.length-1);
  $('historyYearSlider').value=past?history.findIndex(p=>p.date===past.date):Math.max(0,history.length-1);
  $('historyYearSlider').disabled=!history.length;
+ $('historySliderWrap').hidden=mode==='forecast';
+ $('forecastSliderWrap').hidden=mode==='historic';
+ $('wealthChartLegend').textContent=mode==='historic'?'🟡 Historical':mode==='forecast'?'🟠 Pessimistic   🔵 Base   🟢 Optimistic':'🟡 Historical   🟠 Pessimistic   🔵 Base   🟢 Optimistic';
+ $('projectionValues').hidden=mode==='historic';
 }
 function initProjectionSelection(){
  const svg=$('chart');
  const pick=e=>{
   const rect=svg.getBoundingClientRect();if(!rect.width)return;
-  const coord=(e.clientX-rect.left)/rect.width*340,history=historicalNetWorth(),now=today(),first=history[0]?.date||now;
-  const startMs=Date.parse(first+'T12:00:00Z'),nowMs=Date.parse(now+'T12:00:00Z'),endMs=Date.parse(monthDate(now,480)+'T12:00:00Z');
+  const coord=Math.max(5,Math.min(335,(e.clientX-rect.left)/rect.width*340)),history=historicalNetWorth(),now=today(),first=history[0]?.date||now;
+  const startMs=Date.parse((wealthChartMode==='forecast'?now:first)+'T12:00:00Z'),nowMs=Date.parse(now+'T12:00:00Z'),endMs=Date.parse((wealthChartMode==='historic'?now:monthDate(now,480))+'T12:00:00Z');
   const selectedMs=startMs+(coord-5)/330*(endMs-startMs);
-  if(selectedMs<nowMs&&history.length){const nearest=history.reduce((best,p)=>Math.abs(Date.parse(p.date)-selectedMs)<Math.abs(Date.parse(best.date)-selectedMs)?p:best,history[0]);selectHistoricalDate(nearest.date)}
-  else selectProjectionYear((selectedMs-nowMs)/Math.max(1,endMs-nowMs)*40);
+  if(wealthChartMode!=='forecast'&&selectedMs<nowMs&&history.length){const nearest=history.reduce((best,p)=>Math.abs(Date.parse(p.date)-selectedMs)<Math.abs(Date.parse(best.date)-selectedMs)?p:best,history[0]);selectHistoricalDate(nearest.date)}
+  else if(wealthChartMode!=='historic')selectProjectionYear((selectedMs-nowMs)/Math.max(1,Date.parse(monthDate(now,480)+'T12:00:00Z')-nowMs)*40);
  };
  svg.addEventListener('pointerdown',e=>{pick(e);svg.setPointerCapture?.(e.pointerId)});
  svg.addEventListener('pointermove',e=>{if(e.buttons||e.pressure>0)pick(e)});
  $('projectionYearSlider').addEventListener('input',e=>selectProjectionYear(Number(e.target.value)));
  $('historyYearSlider').addEventListener('input',e=>{const history=historicalNetWorth();const item=history[Number(e.target.value)];if(item)selectHistoricalDate(item.date)});
+ document.querySelectorAll('[data-wealth-mode]').forEach(b=>b.addEventListener('click',()=>setWealthChartMode(b.dataset.wealthMode)));
 }
 function accountProjection(account,adjust){
  const result=[],start=today();let amount=balance(account);
