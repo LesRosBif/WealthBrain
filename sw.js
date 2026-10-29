@@ -1,4 +1,4 @@
-const CACHE='wealth-os-mobile-v31';
+const CACHE='wealth-os-mobile-v32';
 const ASSETS=['./','./index.html','./app.js','./manifest.webmanifest','./icon.png'];
 self.addEventListener('install',event=>{
  event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting()));

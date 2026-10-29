@@ -237,7 +237,7 @@ function initAccountProjection(){
 }
 function validateDate(s){if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||!Number.isFinite(dateMs(s)))throw Error('Invalid date')}
 function handle(id,fn){$(id).addEventListener('submit',e=>{e.preventDefault();try{fn(getForm(e.target));persist();e.target.reset();defaults();toast('Saved on this device')}catch(err){toast('Error: '+err.message)}})}
-handle('accountForm',d=>{validateDate(d.date);if(!d.name.trim()||!Number.isFinite(Number(d.balance))||Number(d.balance)<0)throw Error('Invalid account');const id=crypto.randomUUID();db.accounts.push({id,name:d.name.trim(),currency:d.currency==='USD'?'USD':'GBP',type:d.type,accessibility:d.accessibility,model:d.model,rate:Number(d.rate)/100,childAccount:!!d.childAccount});db.observations.push({id:crypto.randomUUID(),accountId:id,date:d.date,balance:minor(d.balance),notes:'Opening balance'})});
+handle('accountForm',d=>{validateDate(d.date);if(!d.name.trim()||!Number.isFinite(Number(d.balance))||Number(d.balance)<0)throw Error('Invalid account');const id=crypto.randomUUID();db.accounts.push({id,name:d.name.trim(),currency:d.currency==='USD'?'USD':'GBP',type:d.type,accessibility:d.accessibility,model:d.model,rate:Number(d.rate)/100,taxTreatment:d.taxTreatment||'unspecified',taxCostBasis:d.taxCostBasis===''?null:minor(d.taxCostBasis),childAccount:!!d.childAccount});db.observations.push({id:crypto.randomUUID(),accountId:id,date:d.date,balance:minor(d.balance),notes:'Opening balance'})});
 handle('reviewForm',d=>{const a=db.accounts.find(a=>a.id===d.accountId);if(!a)throw Error('Choose an account');validateDate(d.date);const prev=latest(a);if(prev&&d.date<=prev.date)throw Error('Observation must be later than latest');if(Number(d.balance)<0)throw Error('Balance must be nonnegative');const f=minor(d.flow||0);if(f){validateDate(d.flowDate||d.date);if(prev&&(d.flowDate||d.date)<=prev.date)throw Error('Cash flow must be after previous observation');if((d.flowDate||d.date)>d.date)throw Error('Cash flow cannot be after observation')}db.observations.push({id:crypto.randomUUID(),accountId:a.id,date:d.date,balance:minor(d.balance),notes:d.notes||''});if(f)db.transactions.push({id:crypto.randomUUID(),accountId:a.id,date:d.flowDate||d.date,amount:f,kind:'external'})});
 handle('planForm',d=>{if(!db.accounts.some(a=>a.id===d.accountId))throw Error('Choose account');validateDate(d.start);if(d.end){validateDate(d.end);if(d.end<d.start)throw Error('End before start')}db.plans.push({id:crypto.randomUUID(),name:d.name,accountId:d.accountId,amount:minor(d.amount),start:d.start,end:d.end,escalation:Number(d.escalation)/100})});
 handle('transferForm',d=>{if(d.from===d.to)throw Error('Choose two different accounts');if(!db.accounts.some(a=>a.id===d.from)||!db.accounts.some(a=>a.id===d.to))throw Error('Choose accounts');validateDate(d.date);const amt=minor(d.amount);if(amt<=0)throw Error('Amount must be positive');const group=crypto.randomUUID();db.transactions.push({id:crypto.randomUUID(),group,accountId:d.from,date:d.date,amount:-amt,kind:'transfer'},{id:crypto.randomUUID(),group,accountId:d.to,date:d.date,amount:amt,kind:'transfer'})});
@@ -264,12 +264,13 @@ function resetAccountValuation(id,date,amount,currency){
  db.observations.push({id:crypto.randomUUID(),accountId:id,date,balance:pennies,notes:'Account rebased ('+currency+')'});
  return {removedTransactions:removed.size};
 }
+function accountTaxTreatment(a){return a.taxTreatment||'unspecified'}
 function openAccount(id){
  const account=db.accounts.find(a=>a.id===id);if(!account)return;
  const active=document.querySelector('nav button.active');if(active)accountReturnTab=active.dataset.tab;
  selectedAccountId=id;const f=$('accountDetailForm');
  for(const key of ['name','institution','owner','purpose','type','accessibility','model'])f.elements[key].value=account[key]||({type:'other',accessibility:'restricted',model:'assumed'}[key]||'');
- f.elements.currency.value=currencyOf(account);$('detailRebaseCurrency').value=currencyOf(account);$('detailRebaseAmount').value=(balance(account)/100).toFixed(2);$('detailRebaseDate').value=today();f.elements.rate.value=(Number(account.rate)||0)*100;f.elements.childAccount.checked=!!account.childAccount;
+ f.elements.taxTreatment.value=accountTaxTreatment(account);f.elements.taxCostBasis.value=account.taxCostBasis==null?'':(account.taxCostBasis/100).toFixed(2);f.elements.currency.value=currencyOf(account);$('detailRebaseCurrency').value=currencyOf(account);$('detailRebaseAmount').value=(balance(account)/100).toFixed(2);$('detailRebaseDate').value=today();f.elements.rate.value=(Number(account.rate)||0)*100;f.elements.childAccount.checked=!!account.childAccount;
  $('detailHeading').textContent=account.name;
  $('detailBalance').textContent=accountMoney(account.type==='debt'?-Math.abs(balance(account)):balance(account),account);
  $('detailHistory').innerHTML=db.observations.filter(o=>o.accountId===id).sort((x,y)=>y.date.localeCompare(x.date)).map(o=>'<div class="row"><small>'+escapeHTML(o.date)+' · '+escapeHTML(o.notes||'')+'</small><strong>'+money(o.balance)+'</strong></div>').join('')||'<p class="muted">No valuations recorded.</p>';
@@ -284,7 +285,7 @@ $('accountDetailForm').addEventListener('submit',e=>{e.preventDefault();try{
  const d=getForm(e.target),rate=Number(d.rate);
  if(!d.name.trim()||!Number.isFinite(rate)||rate< -50||rate>100)throw Error('Check name and rate');
  if(!['cash','investment','pension','property','debt','private','other'].includes(d.type)||!['liquid','restricted'].includes(d.accessibility)||!['blended','fixed','assumed','historical','debt'].includes(d.model))throw Error('Invalid account properties');
- Object.assign(account,{name:d.name.trim(),institution:d.institution.trim(),owner:d.owner.trim(),purpose:d.purpose.trim(),type:d.type,currency:d.currency==='USD'?'USD':'GBP',accessibility:d.accessibility,model:d.model,rate:rate/100,childAccount:e.target.elements.childAccount.checked});
+ Object.assign(account,{name:d.name.trim(),institution:d.institution.trim(),owner:d.owner.trim(),purpose:d.purpose.trim(),type:d.type,currency:d.currency==='USD'?'USD':'GBP',accessibility:d.accessibility,model:d.model,rate:rate/100,taxTreatment:d.taxTreatment,taxCostBasis:d.taxCostBasis===''?null:minor(d.taxCostBasis),childAccount:e.target.elements.childAccount.checked});
  persist();openAccount(account.id);toast('Account updated');
  }catch(err){toast(err.message)}});
 $('detailRebaseDate').value=today();
@@ -344,6 +345,7 @@ function taxRender(){
  $('taxIncomeResult').innerHTML='<strong>'+pounds(i.ani)+'</strong> adjusted net income · '+escapeHTML(i.band)+'<br>Indicative non-savings income tax: <strong>'+pounds(i.tax)+'</strong> · personal allowance '+pounds(i.pa);
  const options=db.accounts.map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');
  const select=$('taxAccount'),old=select.value;select.innerHTML=options;if([...select.options].some(x=>x.value===old))select.value=old;const ps=$('taxPensionAccount'),po=ps.value;ps.innerHTML=db.accounts.filter(x=>x.type==='pension').map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');if([...ps.options].some(x=>x.value===po))ps.value=po;
+ $('accountTaxSummary').innerHTML=db.accounts.map(account=>'<div class="row"><div><strong>'+escapeHTML(account.name)+'</strong><br><small>'+escapeHTML(accountTaxTreatment(account).replaceAll('-',' '))+(account.taxCostBasis==null?'':' · Cost basis '+accountMoney(account.taxCostBasis,account))+'</small></div><div>'+accountMoney(balance(account),account)+'</div></div>').join('')||'<p class="muted">Add an account to assign tax treatment.</p>';
  $('taxHoldings').innerHTML=t.holdings.map(x=>{
  const acc=db.accounts.find(a=>a.id===x.accountId),cost=Number(x.cost)||0,value=Number(x.value)||0,eligible=(x.scheme==='eis'||x.scheme==='seis')&&x.eligible==='yes';
  const reliefRate=x.scheme==='seis'?.5:x.scheme==='eis'?.3:0;
