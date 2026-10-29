@@ -191,3 +191,15 @@ test('monthly household net worth converts USD assets and debts, excluding child
  assert.equal(result.net,22000);
  assert.equal(result.covered,3);
 });
+
+test('rebase account replaces valuations and linked transfer history but retains plans and other account values',()=>{
+ const db={accounts:[{id:'a',currency:'GBP',type:'investment'},{id:'b',currency:'GBP',type:'cash'}],observations:[{id:'old',accountId:'a',date:'2025-01-01',balance:10000},{id:'other',accountId:'b',date:'2025-01-01',balance:20000}],transactions:[{id:'t1',accountId:'a',kind:'transfer',group:'g'},{id:'t2',accountId:'b',kind:'transfer',group:'g'},{id:'t3',accountId:'b',kind:'external'}],plans:[{id:'plan',accountId:'a',amount:100}]};
+ const {call}=engine(['accountDeletionImpact','resetAccountValuation'],{db,validateDate:()=>{},today:()=> '2026-10-29',minor:x=>Math.round(Number(x)*100),crypto:{randomUUID:()=> 'new'}});
+ const result=call('resetAccountValuation','a','2026-10-29','125.50','USD');
+ assert.equal(result.removedTransactions,2);
+ assert.equal(db.accounts[0].currency,'USD');
+ assert.deepEqual(db.observations.map(x=>x.id),['other','new']);
+ assert.equal(db.observations[1].balance,12550);
+ assert.deepEqual(db.transactions.map(x=>x.id),['t3']);
+ assert.equal(db.plans.length,1);
+});

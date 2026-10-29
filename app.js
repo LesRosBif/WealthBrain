@@ -249,12 +249,27 @@ function accountDeletionImpact(id){
  const groups=new Set(db.transactions.filter(t=>t.accountId===id&&t.kind==='transfer'&&t.group).map(t=>t.group));
  return {groups,transactions:db.transactions.filter(t=>t.accountId===id||t.kind==='transfer'&&groups.has(t.group))};
 }
+function resetAccountValuation(id,date,amount,currency){
+ const account=db.accounts.find(a=>a.id===id);if(!account)throw Error('Account not found');
+ validateDate(date);
+ if(date>today())throw Error('Reset date cannot be in the future');
+ if(!['GBP','USD'].includes(currency))throw Error('Choose GBP or USD');
+ const pennies=minor(amount);
+ if(pennies<0)throw Error('Balance must be nonnegative');
+ const impact=accountDeletionImpact(id);
+ const removed=new Set(impact.transactions.map(x=>x.id));
+ db.observations=db.observations.filter(o=>o.accountId!==id);
+ db.transactions=db.transactions.filter(x=>!removed.has(x.id));
+ account.currency=currency;
+ db.observations.push({id:crypto.randomUUID(),accountId:id,date,balance:pennies,notes:'Account rebased ('+currency+')'});
+ return {removedTransactions:removed.size};
+}
 function openAccount(id){
  const account=db.accounts.find(a=>a.id===id);if(!account)return;
  const active=document.querySelector('nav button.active');if(active)accountReturnTab=active.dataset.tab;
  selectedAccountId=id;const f=$('accountDetailForm');
  for(const key of ['name','institution','owner','purpose','type','accessibility','model'])f.elements[key].value=account[key]||({type:'other',accessibility:'restricted',model:'assumed'}[key]||'');
- f.elements.currency.value=currencyOf(account);f.elements.rate.value=(Number(account.rate)||0)*100;f.elements.childAccount.checked=!!account.childAccount;
+ f.elements.currency.value=currencyOf(account);$('detailRebaseCurrency').value=currencyOf(account);$('detailRebaseAmount').value=(balance(account)/100).toFixed(2);$('detailRebaseDate').value=today();f.elements.rate.value=(Number(account.rate)||0)*100;f.elements.childAccount.checked=!!account.childAccount;
  $('detailHeading').textContent=account.name;
  $('detailBalance').textContent=accountMoney(account.type==='debt'?-Math.abs(balance(account)):balance(account),account);
  $('detailHistory').innerHTML=db.observations.filter(o=>o.accountId===id).sort((x,y)=>y.date.localeCompare(x.date)).map(o=>'<div class="row"><small>'+escapeHTML(o.date)+' · '+escapeHTML(o.notes||'')+'</small><strong>'+money(o.balance)+'</strong></div>').join('')||'<p class="muted">No valuations recorded.</p>';
@@ -272,6 +287,20 @@ $('accountDetailForm').addEventListener('submit',e=>{e.preventDefault();try{
  Object.assign(account,{name:d.name.trim(),institution:d.institution.trim(),owner:d.owner.trim(),purpose:d.purpose.trim(),type:d.type,currency:d.currency==='USD'?'USD':'GBP',accessibility:d.accessibility,model:d.model,rate:rate/100,childAccount:e.target.elements.childAccount.checked});
  persist();openAccount(account.id);toast('Account updated');
  }catch(err){toast(err.message)}});
+$('detailRebaseDate').value=today();
+$('detailRebase').addEventListener('click',()=>{
+ try{
+  const account=db.accounts.find(a=>a.id===selectedAccountId);if(!account)throw Error('Account not found');
+  const currency=$('detailRebaseCurrency').value,date=$('detailRebaseDate').value,amount=$('detailRebaseAmount').value;
+  if(amount.trim()==='')throw Error('Enter the replacement balance');
+  validateDate(date);
+  const pennies=minor(amount);if(pennies<0)throw Error('Balance must be nonnegative');
+  const observations=db.observations.filter(o=>o.accountId===account.id).length,impact=accountDeletionImpact(account.id);
+  if(!confirm('REBASE '+account.name+' to '+currency+' '+Number(amount).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})+' on '+date+'? This permanently replaces '+observations+' historical valuations and removes '+impact.transactions.length+' transaction records (including linked transfer counterparts). Growth history will restart from this date. Scheduled future plans and forecast settings are preserved. Export a backup first.'))return;
+  resetAccountValuation(account.id,date,amount,currency);
+  persist();openAccount(account.id);toast('Account rebased — history reset');
+ }catch(err){toast('Error: '+err.message)}
+});
 $('detailUpdateBalance').addEventListener('click',()=>{showTab('review');$('reviewAccount').value=selectedAccountId});
 $('detailDelete').addEventListener('click',()=>{
  const account=db.accounts.find(a=>a.id===selectedAccountId);if(!account)return;
