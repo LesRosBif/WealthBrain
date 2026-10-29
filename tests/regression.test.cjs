@@ -142,7 +142,7 @@ test('deleting an account identifies both sides of linked transfers without unre
 
 test('child accounts are excluded from monthly household net worth',()=>{
  const db={accounts:[{id:'adult',type:'cash'},{id:'child',type:'investment',childAccount:true}],observations:[{accountId:'adult',date:'2026-10-01',balance:10000},{accountId:'child',date:'2026-10-01',balance:50000}]};
- const {call}=engine(['monthlyPosition'],{db});
+ const {call}=engine(['currencyOf','gbpValue','monthlyPosition'],{db,fxState:{rate:0.8}});
  const r=call('monthlyPosition','2026-10-31');
  assert.equal(r.net,10000);assert.equal(r.covered,1);
 });
@@ -168,8 +168,26 @@ test('historical net worth carries valuations forward without backfilling and ex
  {accountId:'debt',date:'2024-02-01',balance:2000},
  {accountId:'child',date:'2024-01-01',balance:50000}
  ]};
- const {call}=engine(['historicalNetWorth'],{db,today:()=> '2024-04-01'});
+ const {call}=engine(['currencyOf','gbpValue','historicalNetWorth'],{db,fxState:{rate:0.8},today:()=> '2024-04-01'});
  const result=call('historicalNetWorth');
  assert.deepEqual(Array.from(result.map(x=>x.net)),[10000,8000,13000]);
  assert.deepEqual(Array.from(result.map(x=>x.covered)),[1,2,2]);
+});
+
+test('USD amounts convert to GBP pennies, GBP amounts remain unchanged, and missing FX is not silently guessed',()=>{
+ const {call}=engine(['currencyOf','gbpValue'],{fxState:{rate:0.8}});
+ assert.equal(call('gbpValue',{currency:'USD'},10000),8000);
+ assert.equal(call('gbpValue',{currency:'GBP'},10000),10000);
+ assert.equal(call('gbpValue',{},10000),10000);
+ const missing=engine(['currencyOf','gbpValue'],{fxState:{rate:null}});
+ assert.equal(missing.call('gbpValue',{currency:'USD'},10000),0);
+});
+test('monthly household net worth converts USD assets and debts, excluding child accounts',()=>{
+ const db={accounts:[{id:'a',type:'cash',currency:'GBP'},{id:'b',type:'investment',currency:'USD'},{id:'c',type:'debt',currency:'USD'},{id:'d',type:'cash',currency:'USD',childAccount:true}],observations:[
+ {accountId:'a',date:'2026-10-01',balance:10000},{accountId:'b',date:'2026-10-01',balance:20000},{accountId:'c',date:'2026-10-01',balance:5000},{accountId:'d',date:'2026-10-01',balance:999999}
+ ]};
+ const {call}=engine(['currencyOf','gbpValue','monthlyPosition'],{db,fxState:{rate:0.8}});
+ const result=call('monthlyPosition','2026-10-31');
+ assert.equal(result.net,22000);
+ assert.equal(result.covered,3);
 });
