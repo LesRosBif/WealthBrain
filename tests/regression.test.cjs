@@ -204,4 +204,4 @@ test('rebase account replaces valuations and linked transfer history but retains
  assert.equal(db.plans.length,1);
 });
 
-test('account settings expose account-level tax classification and optional cost basis',()=>{const html=fs.readFileSync('index.html','utf8');const detail=html.split('<form id="accountDetailForm">')[1]?.split('</form>')[0];assert.match(detail,/name="taxTreatment"/);assert.match(detail,/name="taxCostBasis"/);assert.match(html,/id="accountTaxSummary"/);assert.match(html,/Legacy tax holding records/)});
+test('account settings expose account-level tax classification and optional cost basis',()=>{const html=fs.readFileSync('index.html','utf8');const detail=html.split('<form id="accountDetailForm">')[1]?.split('</form>')[0];assert.match(detail,/name="taxTreatment"/);assert.match(detail,/name="taxCostBasis"/);assert.match(html,/id="accountTaxSummary"/);assert.doesNotMatch(html,/Legacy tax holding records|id="taxHoldingForm"|id="taxHoldings"/)});
