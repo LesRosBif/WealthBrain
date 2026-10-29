@@ -1,6 +1,6 @@
 'use strict';
 const KEY='personal-wealth-os-v2',RECOVERY_KEY='personal-wealth-os-recovery-v3',SCHEMA=3;
-const empty=()=>({version:SCHEMA,accounts:[],observations:[],transactions:[],plans:[],tax:{profiles:[],holdings:[],pensions:[],disposals:[]}});
+const empty=()=>({version:SCHEMA,accounts:[],observations:[],transactions:[],plans:[],tax:{profiles:[],pensions:[],disposals:[]}});
 function validateData(x){
  if(!x||typeof x!=='object'||![2,3].includes(x.version))throw Error('Unsupported data schema');
  for(const k of ['accounts','observations','transactions','plans'])if(!Array.isArray(x[k]))throw Error('Invalid '+k+' collection');
@@ -16,6 +16,7 @@ try{
   db={...saved,version:SCHEMA};localStorage.setItem(KEY,JSON.stringify(db));
  }else db=saved}
 }catch(err){startupError=String(err.message||err);db=empty()}
+if(!startupError&&db.tax&&Object.prototype.hasOwnProperty.call(db.tax,'holdings')){delete db.tax.holdings;localStorage.setItem(KEY,JSON.stringify(db))}
 
 
 const FX_CACHE_KEY='wealthbrain-fx-usd-gbp-v1';
@@ -45,7 +46,7 @@ async function refreshFx(){
 
 const $=id=>document.getElementById(id),today=()=>new Date().toLocaleDateString('en-CA'),money=n=>new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP',maximumFractionDigits:0}).format(n/100),escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const minor=n=>Math.round(Number(n)*100),dateMs=s=>new Date(s+'T12:00:00Z').getTime(),yearDays=(a,b)=>(dateMs(b)-dateMs(a))/86400000;
-function persist(){if(startupError)throw Error('Data locked: '+startupError);validateData(db);if(!localStorage.getItem(RECOVERY_KEY)){const old=localStorage.getItem(KEY);if(old)localStorage.setItem(RECOVERY_KEY,old)}localStorage.setItem(KEY,JSON.stringify(db));render();if(typeof editsSinceBackup!=='undefined'){editsSinceBackup++;backupStatus('Unsaved changes since last backup. Export after this update.')}}
+function persist(){if(db.tax)delete db.tax.holdings;if(startupError)throw Error('Data locked: '+startupError);validateData(db);if(!localStorage.getItem(RECOVERY_KEY)){const old=localStorage.getItem(KEY);if(old)localStorage.setItem(RECOVERY_KEY,old)}localStorage.setItem(KEY,JSON.stringify(db));render();if(typeof editsSinceBackup!=='undefined'){editsSinceBackup++;backupStatus('Unsaved changes since last backup. Export after this update.')}}
 function toast(s){$('toast').textContent=s;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',3000)}
 function getForm(form){return Object.fromEntries(new FormData(form))}
 function latest(a){return db.observations.filter(o=>o.accountId===a.id).sort((x,y)=>y.date.localeCompare(x.date))[0]}
@@ -308,21 +309,19 @@ $('detailDelete').addEventListener('click',()=>{
  const impact=accountDeletionImpact(account.id);
  const observations=db.observations.filter(o=>o.accountId===account.id).length;
  const plans=db.plans.filter(x=>x.accountId===account.id).length;
- const holdings=taxState().holdings.filter(x=>x.accountId===account.id).length;
  const pensions=taxState().pensions.filter(x=>x.accountId===account.id).length;
- if(!confirm('Delete '+account.name+' and '+observations+' valuations, '+impact.transactions.length+' transaction entries (including '+impact.groups.size+' complete linked transfers), '+plans+' plans, '+holdings+' holdings and '+pensions+' pension records? Other accounts\' recorded balances will not change. Export a backup first.'))return;
+ if(!confirm('Delete '+account.name+' and '+observations+' valuations, '+impact.transactions.length+' transaction entries (including '+impact.groups.size+' complete linked transfers), '+plans+' plans and '+pensions+' pension records? Other accounts\' recorded balances will not change. Export a backup first.'))return;
  db.accounts=db.accounts.filter(x=>x.id!==account.id);
  db.observations=db.observations.filter(x=>x.accountId!==account.id);
  const remove=new Set(impact.transactions.map(x=>x.id));db.transactions=db.transactions.filter(x=>!remove.has(x.id));
  db.plans=db.plans.filter(x=>x.accountId!==account.id);
- taxState().holdings=taxState().holdings.filter(x=>x.accountId!==account.id);
  taxState().pensions=taxState().pensions.filter(x=>x.accountId!==account.id);
  selectedAccountId=null;persist();showTab(accountReturnTab);toast('Account deleted');
 });
 // Portable text backups are JSON wrapped in readable headings. They can be pasted into Google Docs.
 
 /* Tax profile and holdings: all amounts are GBP minor units unless otherwise noted. */
-function taxState(){if(!db.tax)db.tax={profiles:[],holdings:[],pensions:[]};for(const k of ['profiles','holdings','pensions','disposals'])if(!Array.isArray(db.tax[k]))db.tax[k]=[];return db.tax}
+function taxState(){if(!db.tax)db.tax={profiles:[],pensions:[]};for(const k of ['profiles','pensions','disposals'])if(!Array.isArray(db.tax[k]))db.tax[k]=[];return db.tax}
 function taxYear(date){const d=new Date(date+'T12:00:00Z'),y=d.getUTCFullYear();return d.getUTCMonth()>3||(d.getUTCMonth()===3&&d.getUTCDate()>=6)?y:y-1}
 function pounds(n){return money(Math.round(n*100))}
 function taxIncome(profile){
@@ -343,15 +342,8 @@ function taxRender(){
  for(const name of ['salary','bonus','other','deductions','interest','dividends']){const el=$('tax'+name[0].toUpperCase()+name.slice(1));if(document.activeElement!==el)el.value=profile?.[name]??0}
  const i=taxIncome(profile||{});
  $('taxIncomeResult').innerHTML='<strong>'+pounds(i.ani)+'</strong> adjusted net income · '+escapeHTML(i.band)+'<br>Indicative non-savings income tax: <strong>'+pounds(i.tax)+'</strong> · personal allowance '+pounds(i.pa);
- const options=db.accounts.map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');
- const select=$('taxAccount'),old=select.value;select.innerHTML=options;if([...select.options].some(x=>x.value===old))select.value=old;const ps=$('taxPensionAccount'),po=ps.value;ps.innerHTML=db.accounts.filter(x=>x.type==='pension').map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');if([...ps.options].some(x=>x.value===po))ps.value=po;
+const ps=$('taxPensionAccount'),po=ps.value;ps.innerHTML=db.accounts.filter(x=>x.type==='pension').map(x=>'<option value="'+escapeHTML(x.id)+'">'+escapeHTML(x.name)+'</option>').join('');if([...ps.options].some(x=>x.value===po))ps.value=po;
  $('accountTaxSummary').innerHTML=db.accounts.map(account=>'<div class="row"><div><strong>'+escapeHTML(account.name)+'</strong><br><small>'+escapeHTML(accountTaxTreatment(account).replaceAll('-',' '))+(account.taxCostBasis==null?'':' · Cost basis '+accountMoney(account.taxCostBasis,account))+'</small></div><div>'+accountMoney(balance(account),account)+'</div></div>').join('')||'<p class="muted">Add an account to assign tax treatment.</p>';
- $('taxHoldings').innerHTML=t.holdings.map(x=>{
- const acc=db.accounts.find(a=>a.id===x.accountId),cost=Number(x.cost)||0,value=Number(x.value)||0,eligible=(x.scheme==='eis'||x.scheme==='seis')&&x.eligible==='yes';
- const reliefRate=x.scheme==='seis'?.5:x.scheme==='eis'?.3:0;
- const relief=eligible?cost*reliefRate:0;
- return '<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>'+escapeHTML(acc?.name||'Unlinked')+' · '+escapeHTML(x.wrapper)+' · '+escapeHTML(x.scheme.toUpperCase())+' · '+escapeHTML(x.owner)+'</small></div><div><strong>'+pounds(value)+'</strong><br><small>Cost '+pounds(cost)+' · potential initial relief (unverified) '+pounds(relief)+' · claimed '+pounds(Number(x.reliefClaimed)||0)+'</small></div></div>';
- }).join('')||'<p class="muted">No tax-specific holdings recorded.</p>';
  $('taxPensions').innerHTML=t.pensions.map(x=>{
  const account=db.accounts.find(a=>a.id===x.accountId);
  const remaining=Math.max(0,Number(x.lsa??268275)-(Number(x.used)||0));
@@ -427,11 +419,6 @@ function taxExtraRender(){
  const t=taxState(),owner=$('taxOwner').value,year=Number($('taxYear').value),p=t.profiles.find(x=>x.owner===owner&&x.year===year)||{};
  const result=incomeEstimate(p),el=$('taxExtendedResult');
  el.innerHTML=(year!==2026?'<strong>Warning: calculations use 2026/27 rates, not the selected tax year.</strong><br>':'')+'Estimated income tax including savings/dividends: <strong>'+pounds(result.totalTax)+'</strong><br><small>Non-savings '+pounds(result.tax)+' · savings '+pounds(result.interestTax)+' · dividends '+pounds(result.dividendTax)+'</small>';
- const list=$('taxHoldingActions');
- list.innerHTML=t.holdings.map(x=>{
- const cost=Number(x.cost)||0,value=Number(x.value)||0,d=disposalEstimate(x,value,cost,p);
- return '<div class="row"><div><strong>'+escapeHTML(x.name)+'</strong><br><small>Illustrative gain '+pounds(d.gain)+' · '+(d.conditional==='wrapper'?'Tax-exempt wrapper':d.conditional==='review'?'EIS/SEIS: review conditions · provisional CGT '+pounds(d.estimate):'Estimated CGT '+pounds(d.estimate))+'</small></div><div><button type="button" data-tax-edit="'+escapeHTML(x.id)+'">Edit</button> <button type="button" data-tax-delete="'+escapeHTML(x.id)+'">Delete</button></div></div>';
- }).join('');
  const selected=$('taxPensionAccount').value,account=db.accounts.find(x=>x.id===selected);
  const record=t.pensions.find(x=>x.accountId===selected)||{};
  const scenario=pensionScenario(account?balance(account)/100:0,Number($('taxWithdrawal').value)||0,Number(record.lsa??268275),Number(record.used)||0);
@@ -489,16 +476,8 @@ function taxForms(){
  $('taxYear').value=taxYear(today());
  for(const id of ['taxOwner','taxYear'])$(id).addEventListener('change',taxRender);
  $('taxProfileForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState(),year=Number(d.year);if(!Number.isInteger(year)||year<2024||year>2100)throw Error('Invalid tax year');for(const k of ['salary','bonus','other','deductions','interest','dividends'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid amount');t.profiles=t.profiles.filter(x=>x.owner!==d.owner||x.year!==year);t.profiles.push({...d,year});persist();toast('Tax profile saved')}catch(err){toast(err.message)}});
- $('taxHoldingForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target);if(!db.accounts.some(x=>x.id===d.accountId))throw Error('Choose account');validateDate(d.issueDate);for(const k of ['cost','value','reliefClaimed'])if(!Number.isFinite(Number(d[k]))||Number(d[k])<0)throw Error('Invalid holding amount');const t=taxState(),id=$('taxHoldingEditId').value||crypto.randomUUID();t.holdings=t.holdings.filter(x=>x.id!==id);t.holdings.push({...d,id});persist();e.target.reset();$('taxHoldingEditId').value='';toast('Holding saved')}catch(err){toast(err.message)}});
  $('taxWithdrawal').addEventListener('input',()=>{taxExtraRender();retirementEstimate()});
  $('taxPensionAccount').addEventListener('change',()=>{taxExtraRender();retirementEstimate()});
- $('taxHoldingActions').addEventListener('click',e=>{
-  const edit=e.target.closest('[data-tax-edit]'),del=e.target.closest('[data-tax-delete]');if(!edit&&!del)return;
-  const id=(edit||del).dataset[edit?'taxEdit':'taxDelete'],t=taxState(),item=t.holdings.find(x=>x.id===id);if(!item)return;
-  if(del){if(!confirm('Delete tax metadata for '+item.name+'? This will not remove the linked wealth account.'))return;t.holdings=t.holdings.filter(x=>x.id!==id);persist();return}
-  const form=$('taxHoldingForm');for(const [key,value] of Object.entries(item)){const input=form.elements.namedItem(key);if(input)input.value=value}
-  $('taxHoldingEditId').value=id;form.scrollIntoView({behavior:'smooth',block:'start'});toast('Editing '+item.name);
- });
  $('taxPensionForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState();if(!db.accounts.some(x=>x.id===d.accountId&&x.type==='pension'))throw Error('Choose pension');if(Number(d.lsa)<0||Number(d.used)<0||!Number.isFinite(Number(d.lsa)+Number(d.used)))throw Error('Invalid allowance');t.pensions=t.pensions.filter(x=>x.accountId!==d.accountId);t.pensions.push(d);persist();toast('Pension allowance saved')}catch(err){toast(err.message)}});
 }
 taxForms();initDisposals();defaults();$('fxRefresh').addEventListener('click',refreshFx);setupScenario();initProjectionSelection();initAccountProjection();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
