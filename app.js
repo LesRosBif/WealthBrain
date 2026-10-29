@@ -17,6 +17,32 @@ try{
  }else db=saved}
 }catch(err){startupError=String(err.message||err);db=empty()}
 
+
+const FX_CACHE_KEY='wealthbrain-fx-usd-gbp-v1';
+let fxState={rate:null,date:null,status:'unavailable'};
+try{const cached=JSON.parse(localStorage.getItem(FX_CACHE_KEY)||'null');if(cached&&Number.isFinite(cached.rate)&&cached.rate>0&&/^\d{4}-\d{2}-\d{2}$/.test(cached.date))fxState={...cached,status:'cached'}}catch(_){}
+function currencyOf(account){return account.currency==='USD'?'USD':'GBP'}
+function accountMoney(value,account){return new Intl.NumberFormat('en-GB',{style:'currency',currency:currencyOf(account),maximumFractionDigits:0}).format(value/100)}
+function gbpValue(account,value){return currencyOf(account)==='USD'?(fxState.rate===null?0:Math.round(value*fxState.rate)):value}
+function missingFx(){return fxState.rate===null&&db.accounts.some(a=>a.currency==='USD'&&!a.childAccount)}
+function fxStatus(){
+ const el=$('fxStatus');if(!el)return;
+ const count=db.accounts.filter(a=>a.currency==='USD').length;
+ el.textContent=count===0?'All accounts are currently denominated in GBP.':fxState.rate===null?'USD/GBP rate unavailable — GBP net worth and projections are incomplete until FX loads.':('USD → GBP: £'+fxState.rate.toFixed(5)+' per $1 · '+fxState.date+(fxState.status==='live'?' · latest published rate':' · cached / offline rate')+'. Historical USD balances use this rate, not historical daily FX.');
+}
+async function refreshFx(){
+ const el=$('fxRefresh');if(el)el.disabled=true;
+ try{
+  const response=await fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=GBP',{cache:'no-store'});
+  if(!response.ok)throw Error('FX service unavailable');
+  const result=await response.json(),rate=result?.rates?.GBP;
+  if(!Number.isFinite(rate)||rate<=0||rate>=2||!/^\d{4}-\d{2}-\d{2}$/.test(result.date))throw Error('Invalid FX response');
+  fxState={rate,date:result.date,status:'live'};
+  localStorage.setItem(FX_CACHE_KEY,JSON.stringify({rate,date:result.date}));
+ }catch(_){if(fxState.rate!==null)fxState.status='cached';else fxState.status='unavailable'}
+ finally{if(el)el.disabled=false;render()}
+}
+
 const $=id=>document.getElementById(id),today=()=>new Date().toLocaleDateString('en-CA'),money=n=>new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP',maximumFractionDigits:0}).format(n/100),escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const minor=n=>Math.round(Number(n)*100),dateMs=s=>new Date(s+'T12:00:00Z').getTime(),yearDays=(a,b)=>(dateMs(b)-dateMs(a))/86400000;
 function persist(){if(startupError)throw Error('Data locked: '+startupError);validateData(db);if(!localStorage.getItem(RECOVERY_KEY)){const old=localStorage.getItem(KEY);if(old)localStorage.setItem(RECOVERY_KEY,old)}localStorage.setItem(KEY,JSON.stringify(db));render();if(typeof editsSinceBackup!=='undefined'){editsSinceBackup++;backupStatus('Unsaved changes since last backup. Export after this update.')}}
@@ -27,8 +53,8 @@ function balance(a){return latest(a)?.balance||0}
 function observed(a){const os=db.observations.filter(o=>o.accountId===a.id).sort((x,y)=>x.date.localeCompare(y.date));if(os.length<2)return null;const start=os[0],end=os[os.length-1],days=yearDays(start.date,end.date);if(days<30||start.balance<=0||end.balance<=0)return null;const flows=db.transactions.filter(t=>t.accountId===a.id&&t.date>start.date&&t.date<=end.date);const net=flows.reduce((s,t)=>s+t.amount,0);const weighted=flows.reduce((s,t)=>s+t.amount*yearDays(t.date,end.date)/days,0);const denom=start.balance+weighted;if(denom<=0)return null;const r=(end.balance-start.balance-net)/denom;if(r<=-1)return null;return Math.max(-.5,Math.min(.5,Math.pow(1+r,365.25/days)-1))}
 function rate(a,adjust){let r=a.rate;const o=observed(a);if(o!==null){if(a.model==='historical')r=o;else if(a.model==='blended')r=.7*a.rate+.3*o}if(a.model!=='fixed'&&a.model!=='debt')r+=adjust;return Math.max(-.5,Math.min(.5,r))}
 function monthDate(start,m){const d=new Date(start+'T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+m);return d.toISOString().slice(0,10)}
-function forecast(adjust,scenario){const bals=Object.fromEntries(db.accounts.map(a=>[a.id,balance(a)]));const series=[];const start=today();for(let m=0;m<=480;m++){if(m){const d=monthDate(start,m);for(const a of db.accounts)bals[a.id]=Math.round(bals[a.id]*Math.pow(1+rate(a,adjust),1/12));for(const p of db.plans){if(d<p.start||(p.end&&d>p.end))continue;const elapsed=Math.max(0,yearDays(p.start,d)/365.25);bals[p.accountId]=(bals[p.accountId]||0)+Math.round(p.amount*Math.pow(1+p.escalation,elapsed))}if(scenario&&scenario.accountId&&scenario.amount&&m>=scenario.from*12&&m<=scenario.to*12)bals[scenario.accountId]=(bals[scenario.accountId]||0)+scenario.amount}if(m%12===0){let net=0,liquid=0;for(const a of db.accounts){if(a.childAccount)continue;const v=bals[a.id];net+=a.type==='debt'?-Math.abs(v):v;if(a.accessibility==='liquid'&&a.type!=='debt')liquid+=v}series.push({year:m/12,net,liquid})}}return series}
-function render(){taxRender();const net=db.accounts.filter(a=>!a.childAccount).reduce((s,a)=>s+(a.type==='debt'?-Math.abs(balance(a)):balance(a)),0);const liquid=db.accounts.filter(a=>!a.childAccount).reduce((s,a)=>s+(a.type!=='debt'&&a.accessibility==='liquid'?balance(a):0),0);$('net').textContent=money(net);$('liquid').textContent=money(liquid);$('count').textContent=db.accounts.length;refreshScenarioAccounts();const scenarios=scenarioForecasts();$('future').textContent=money(scenarios[1][20].net);draw(scenarios);renderScenarioSummary(scenarios);renderMonthly();const accountRows=db.accounts.map(a=>`<button type="button" class="account-entry" data-account-id="${escapeHTML(a.id)}"><span><strong>${escapeHTML(a.name)}</strong><br><small>${escapeHTML(a.institution||'')} · ${escapeHTML(a.owner||'')} · ${escapeHTML(a.purpose||a.type)}</small></span><span><strong>${money(a.type==='debt'?-Math.abs(balance(a)):balance(a))}</strong><br><small>Details →</small></span></button>`).join('');$('accountList').innerHTML=accountRows||'<p class="muted">Add your first account above.</p>';const potGroups=new Map();
+function forecast(adjust,scenario){const bals=Object.fromEntries(db.accounts.map(a=>[a.id,balance(a)]));const series=[];const start=today();for(let m=0;m<=480;m++){if(m){const d=monthDate(start,m);for(const a of db.accounts)bals[a.id]=Math.round(bals[a.id]*Math.pow(1+rate(a,adjust),1/12));for(const p of db.plans){if(d<p.start||(p.end&&d>p.end))continue;const elapsed=Math.max(0,yearDays(p.start,d)/365.25);bals[p.accountId]=(bals[p.accountId]||0)+Math.round(p.amount*Math.pow(1+p.escalation,elapsed))}if(scenario&&scenario.accountId&&scenario.amount&&m>=scenario.from*12&&m<=scenario.to*12)bals[scenario.accountId]=(bals[scenario.accountId]||0)+scenario.amount}if(m%12===0){let net=0,liquid=0;for(const a of db.accounts){if(a.childAccount)continue;const v=bals[a.id];net+=a.type==='debt'?-Math.abs(gbpValue(a,v)):gbpValue(a,v);if(a.accessibility==='liquid'&&a.type!=='debt')liquid+=gbpValue(a,v)}series.push({year:m/12,net,liquid})}}return series}
+function render(){taxRender();fxStatus();const net=db.accounts.filter(a=>!a.childAccount).reduce((s,a)=>s+(a.type==='debt'?-Math.abs(gbpValue(a,balance(a))):gbpValue(a,balance(a))),0);const liquid=db.accounts.filter(a=>!a.childAccount).reduce((s,a)=>s+(a.type!=='debt'&&a.accessibility==='liquid'?gbpValue(a,balance(a)):0),0);$('net').textContent=money(net);$('liquid').textContent=money(liquid);$('count').textContent=db.accounts.length;refreshScenarioAccounts();const scenarios=scenarioForecasts();$('future').textContent=money(scenarios[1][20].net);draw(scenarios);renderScenarioSummary(scenarios);renderMonthly();const accountRows=db.accounts.map(a=>`<button type="button" class="account-entry" data-account-id="${escapeHTML(a.id)}"><span><strong>${escapeHTML(a.name)}</strong><br><small>${escapeHTML(a.institution||'')} · ${escapeHTML(a.owner||'')} · ${escapeHTML(a.purpose||a.type)}</small></span><span><strong>${accountMoney(a.type==='debt'?-Math.abs(balance(a)):balance(a),a)}</strong><br><small>Details →</small></span></button>`).join('');$('accountList').innerHTML=accountRows||'<p class="muted">Add your first account above.</p>';const potGroups=new Map();
 for(const account of db.accounts){
  const pot=(account.purpose||'').trim()||'Unassigned';
  if(!potGroups.has(pot))potGroups.set(pot,[]);
@@ -44,7 +70,7 @@ function ownerStyle(owner){
 }
 const accountButton=account=>{
  const owner=ownerStyle(account.owner);
- return `<button type="button" class="account-entry" data-account-id="${escapeHTML(account.id)}" style="border-left:4px solid ${owner.color};padding-left:10px"><span><strong>${escapeHTML(account.name)}</strong><br><small><span class="owner-pill" style="--owner-color:${owner.color}">${escapeHTML(owner.label)}</span> · ${escapeHTML(account.type)}${account.childAccount?' · Child account':''}</small></span><span><strong>${money(account.type==='debt'?-Math.abs(balance(account)):balance(account))}</strong><br><small>Details →</small></span></button>`;
+ return `<button type="button" class="account-entry" data-account-id="${escapeHTML(account.id)}" style="border-left:4px solid ${owner.color};padding-left:10px"><span><strong>${escapeHTML(account.name)}</strong><br><small><span class="owner-pill" style="--owner-color:${owner.color}">${escapeHTML(owner.label)}</span> · ${escapeHTML(account.type)}${account.childAccount?' · Child account':''}</small></span><span><strong>${accountMoney(account.type==='debt'?-Math.abs(balance(account)):balance(account),account)}</strong><br><small>Details →</small></span></button>`;
 };
 $('summaryAccounts').innerHTML=[...potGroups.entries()].sort((x,y)=>x[0].localeCompare(y[0])).map(([pot,accounts])=>{
  const total=accounts.reduce((sum,account)=>sum+(account.type==='debt'?-Math.abs(balance(account)):balance(account)),0);
@@ -58,7 +84,7 @@ $('planList').innerHTML=db.plans.map(p=>`<div class="row"><div><strong>${escapeH
 function monthEnd(ym){const [y,m]=ym.split('-').map(Number);return new Date(Date.UTC(y,m,0)).toISOString().slice(0,10)}
 function monthlyPosition(date){
  const groups={cash:0,investment:0,pension:0,property:0,private:0,other:0,debt:0};let net=0,covered=0;
- for(const a of db.accounts){if(a.childAccount)continue;const o=db.observations.filter(x=>x.accountId===a.id&&x.date<=date).sort((x,y)=>y.date.localeCompare(x.date))[0];if(!o)continue;covered++;const v=a.type==='debt'?-Math.abs(o.balance):o.balance;net+=v;groups[a.type in groups?a.type:'other']+=v}
+ for(const a of db.accounts){if(a.childAccount)continue;const o=db.observations.filter(x=>x.accountId===a.id&&x.date<=date).sort((x,y)=>y.date.localeCompare(x.date))[0];if(!o)continue;covered++;const v=a.type==='debt'?-Math.abs(gbpValue(a,o.balance)):gbpValue(a,o.balance);net+=v;groups[a.type in groups?a.type:'other']+=v}
  return {net,covered,groups}
 }
 function renderMonthly(){
@@ -115,7 +141,7 @@ function historicalNetWorth(){
   for(const a of eligible){
    const records=snapshots.get(a.id),obs=records.filter(o=>o.date<=date).at(-1);
    if(!obs)continue;
-   covered++;net+=a.type==='debt'?-Math.abs(obs.balance):obs.balance;
+   covered++;net+=a.type==='debt'?-Math.abs(gbpValue(a,obs.balance)):gbpValue(a,obs.balance);
   }
   return {date,net,covered,total:eligible.length};
  });
@@ -198,7 +224,7 @@ function renderAccountProjection(account){
  paths.map((points,i)=>`<circle cx="${x}" cy="${y(points[selectedAccountProjectionYear])}" r="4" fill="${colors[i]}"/>`).join('')+
  `<text x="5" y="218" fill="#9fb0c7" font-size="11">Today</text><text x="302" y="218" fill="#9fb0c7" font-size="11">+40y</text>`;
  $('detailProjectionYear').textContent=selectedAccountProjectionYear===0?'Today':'Year '+selectedAccountProjectionYear;
- $('detailProjectionValues').innerHTML=paths.map((points,i)=>'<div><small>'+(fixed?'Fixed rate':['Pessimistic','Base','Optimistic'][i])+'</small><div class="metric">'+money(points[selectedAccountProjectionYear])+'</div></div>').join('');
+ $('detailProjectionValues').innerHTML=paths.map((points,i)=>'<div><small>'+(fixed?'Fixed rate':['Pessimistic','Base','Optimistic'][i])+'</small><div class="metric">'+accountMoney(points[selectedAccountProjectionYear],account)+'</div></div>').join('');
  $('detailProjectionSlider').value=selectedAccountProjectionYear;
  $('detailProjectionNote').textContent='Illustrative '+(fixed?'single-rate':'three-scenario')+' projection, including scheduled account contributions. '+(account.childAccount?'Excluded from household net worth.':'');
 }
@@ -211,7 +237,7 @@ function initAccountProjection(){
 }
 function validateDate(s){if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||!Number.isFinite(dateMs(s)))throw Error('Invalid date')}
 function handle(id,fn){$(id).addEventListener('submit',e=>{e.preventDefault();try{fn(getForm(e.target));persist();e.target.reset();defaults();toast('Saved on this device')}catch(err){toast('Error: '+err.message)}})}
-handle('accountForm',d=>{validateDate(d.date);if(!d.name.trim()||!Number.isFinite(Number(d.balance))||Number(d.balance)<0)throw Error('Invalid account');const id=crypto.randomUUID();db.accounts.push({id,name:d.name.trim(),type:d.type,accessibility:d.accessibility,model:d.model,rate:Number(d.rate)/100,childAccount:!!d.childAccount});db.observations.push({id:crypto.randomUUID(),accountId:id,date:d.date,balance:minor(d.balance),notes:'Opening balance'})});
+handle('accountForm',d=>{validateDate(d.date);if(!d.name.trim()||!Number.isFinite(Number(d.balance))||Number(d.balance)<0)throw Error('Invalid account');const id=crypto.randomUUID();db.accounts.push({id,name:d.name.trim(),currency:d.currency==='USD'?'USD':'GBP',type:d.type,accessibility:d.accessibility,model:d.model,rate:Number(d.rate)/100,childAccount:!!d.childAccount});db.observations.push({id:crypto.randomUUID(),accountId:id,date:d.date,balance:minor(d.balance),notes:'Opening balance'})});
 handle('reviewForm',d=>{const a=db.accounts.find(a=>a.id===d.accountId);if(!a)throw Error('Choose an account');validateDate(d.date);const prev=latest(a);if(prev&&d.date<=prev.date)throw Error('Observation must be later than latest');if(Number(d.balance)<0)throw Error('Balance must be nonnegative');const f=minor(d.flow||0);if(f){validateDate(d.flowDate||d.date);if(prev&&(d.flowDate||d.date)<=prev.date)throw Error('Cash flow must be after previous observation');if((d.flowDate||d.date)>d.date)throw Error('Cash flow cannot be after observation')}db.observations.push({id:crypto.randomUUID(),accountId:a.id,date:d.date,balance:minor(d.balance),notes:d.notes||''});if(f)db.transactions.push({id:crypto.randomUUID(),accountId:a.id,date:d.flowDate||d.date,amount:f,kind:'external'})});
 handle('planForm',d=>{if(!db.accounts.some(a=>a.id===d.accountId))throw Error('Choose account');validateDate(d.start);if(d.end){validateDate(d.end);if(d.end<d.start)throw Error('End before start')}db.plans.push({id:crypto.randomUUID(),name:d.name,accountId:d.accountId,amount:minor(d.amount),start:d.start,end:d.end,escalation:Number(d.escalation)/100})});
 handle('transferForm',d=>{if(d.from===d.to)throw Error('Choose two different accounts');if(!db.accounts.some(a=>a.id===d.from)||!db.accounts.some(a=>a.id===d.to))throw Error('Choose accounts');validateDate(d.date);const amt=minor(d.amount);if(amt<=0)throw Error('Amount must be positive');const group=crypto.randomUUID();db.transactions.push({id:crypto.randomUUID(),group,accountId:d.from,date:d.date,amount:-amt,kind:'transfer'},{id:crypto.randomUUID(),group,accountId:d.to,date:d.date,amount:amt,kind:'transfer'})});
@@ -228,7 +254,7 @@ function openAccount(id){
  const active=document.querySelector('nav button.active');if(active)accountReturnTab=active.dataset.tab;
  selectedAccountId=id;const f=$('accountDetailForm');
  for(const key of ['name','institution','owner','purpose','type','accessibility','model'])f.elements[key].value=account[key]||({type:'other',accessibility:'restricted',model:'assumed'}[key]||'');
- f.elements.rate.value=(Number(account.rate)||0)*100;f.elements.childAccount.checked=!!account.childAccount;
+ f.elements.currency.value=currencyOf(account);f.elements.rate.value=(Number(account.rate)||0)*100;f.elements.childAccount.checked=!!account.childAccount;
  $('detailHeading').textContent=account.name;
  $('detailBalance').textContent=money(account.type==='debt'?-Math.abs(balance(account)):balance(account));
  $('detailHistory').innerHTML=db.observations.filter(o=>o.accountId===id).sort((x,y)=>y.date.localeCompare(x.date)).map(o=>'<div class="row"><small>'+escapeHTML(o.date)+' · '+escapeHTML(o.notes||'')+'</small><strong>'+money(o.balance)+'</strong></div>').join('')||'<p class="muted">No valuations recorded.</p>';
@@ -243,7 +269,7 @@ $('accountDetailForm').addEventListener('submit',e=>{e.preventDefault();try{
  const d=getForm(e.target),rate=Number(d.rate);
  if(!d.name.trim()||!Number.isFinite(rate)||rate< -50||rate>100)throw Error('Check name and rate');
  if(!['cash','investment','pension','property','debt','private','other'].includes(d.type)||!['liquid','restricted'].includes(d.accessibility)||!['blended','fixed','assumed','historical','debt'].includes(d.model))throw Error('Invalid account properties');
- Object.assign(account,{name:d.name.trim(),institution:d.institution.trim(),owner:d.owner.trim(),purpose:d.purpose.trim(),type:d.type,accessibility:d.accessibility,model:d.model,rate:rate/100,childAccount:e.target.elements.childAccount.checked});
+ Object.assign(account,{name:d.name.trim(),institution:d.institution.trim(),owner:d.owner.trim(),purpose:d.purpose.trim(),type:d.type,currency:d.currency==='USD'?'USD':'GBP',accessibility:d.accessibility,model:d.model,rate:rate/100,childAccount:e.target.elements.childAccount.checked});
  persist();openAccount(account.id);toast('Account updated');
  }catch(err){toast(err.message)}});
 $('detailUpdateBalance').addEventListener('click',()=>{showTab('review');$('reviewAccount').value=selectedAccountId});
@@ -444,4 +470,6 @@ function taxForms(){
  });
  $('taxPensionForm').addEventListener('submit',e=>{e.preventDefault();try{const d=getForm(e.target),t=taxState();if(!db.accounts.some(x=>x.id===d.accountId&&x.type==='pension'))throw Error('Choose pension');if(Number(d.lsa)<0||Number(d.used)<0||!Number.isFinite(Number(d.lsa)+Number(d.used)))throw Error('Invalid allowance');t.pensions=t.pensions.filter(x=>x.accountId!==d.accountId);t.pensions.push(d);persist();toast('Pension allowance saved')}catch(err){toast(err.message)}});
 }
-taxForms();initDisposals();defaults();setupScenario();initProjectionSelection();initAccountProjection();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+taxForms();initDisposals();defaults();$('fxRefresh').addEventListener('click',refreshFx);setupScenario();initProjectionSelection();initAccountProjection();render();if(startupError)alert('WealthBrain storage error: '+startupError+'. Do not edit or erase data. Export the recovery snapshot or restore a verified backup.');if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+
+refreshFx();
