@@ -73,7 +73,7 @@ const accountButton=account=>{
  return `<button type="button" class="account-entry" data-account-id="${escapeHTML(account.id)}" style="border-left:4px solid ${owner.color};padding-left:10px"><span><strong>${escapeHTML(account.name)}</strong><br><small><span class="owner-pill" style="--owner-color:${owner.color}">${escapeHTML(owner.label)}</span> · ${escapeHTML(account.type)}${account.childAccount?' · Child account':''}</small></span><span><strong>${accountMoney(account.type==='debt'?-Math.abs(balance(account)):balance(account),account)}</strong><br><small>Details →</small></span></button>`;
 };
 $('summaryAccounts').innerHTML=[...potGroups.entries()].sort((x,y)=>x[0].localeCompare(y[0])).map(([pot,accounts])=>{
- const total=accounts.reduce((sum,account)=>sum+(account.type==='debt'?-Math.abs(balance(account)):balance(account)),0);
+ const total=accounts.reduce((sum,account)=>sum+(account.type==='debt'?-Math.abs(gbpValue(account,balance(account))):gbpValue(account,balance(account))),0);
  const open=priorOpen.has(pot)?' open':'';
  return `<details class="pot-accordion" data-pot="${escapeHTML(pot)}"${open}><summary><span>${escapeHTML(pot)} <small>(${accounts.length}${accounts.some(a=>a.childAccount)?' · includes children':''})</small></span><strong>${money(total)}</strong></summary><div class="pot-items">${accounts.map(accountButton).join('')}</div></details>`;
 }).join('')||'<p class="muted">No accounts yet.</p>';
